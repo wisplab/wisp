@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+*.egg-info
+.venv/
+venv/
+
+# Rust
+target/
+Cargo.lock
+
+# Go
+*.exe
+*.test
+*.out
+go.sum
+
+# Build artifacts
+bin/
+*.wasm
+*.so
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Tooling
+.omc/
+.claude/
