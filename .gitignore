@@ -40,3 +40,6 @@ bin/
 # Tooling
 .omc/
 .claude/
+
+# Private strategic docs (founder-only, not for public)
+private/
