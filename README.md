@@ -6,9 +6,9 @@
 
 ## Why Wisp
 
-While Modal/Lambda optimize for ML jobs (seconds-to-minutes workloads), AI agents make a fundamentally different call pattern: **millions of small, tight, ephemeral tool calls** — read a file, parse JSON, run a quick search, format a string.
+Today's serverless platforms were designed for HTTP request/response and ML batch workloads (seconds-to-minutes execution). AI agents make a fundamentally different call pattern: **millions of small, tight, ephemeral tool calls** — read a file, parse JSON, run a quick search, format a string.
 
-Today's serverless adds 0.8–2 seconds of cold-start overhead per call. In a 50-call agent task, that's 75 seconds of pure friction. From the user's perspective: "the agent is slow."
+The cold-start overhead in current serverless platforms is ~0.8–2 seconds per call. In a 50-call agent task, that's 75 seconds of pure friction. From the user's perspective: "the agent is slow."
 
 Wisp is built for this call pattern.
 
