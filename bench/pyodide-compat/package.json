@@ -1,0 +1,15 @@
+{
+  "name": "wisp-pyodide-compat",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Phase 0 Spike 2: Pyodide pandas/sklearn compatibility check vs CPython",
+  "scripts": {
+    "test": "node run.mjs",
+    "test:pandas": "node run.mjs pandas",
+    "test:sklearn": "node run.mjs sklearn",
+    "test:numpy": "node run.mjs numpy"
+  },
+  "dependencies": {
+    "pyodide": "^0.28.0"
+  }
+}

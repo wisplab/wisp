@@ -1,0 +1,8 @@
+# Spike 1 (Rust)
+wasm-coldstart/target/
+wasm-coldstart/Cargo.lock
+
+# Spike 2 (Node + venv)
+pyodide-compat/node_modules/
+pyodide-compat/.venv/
+pyodide-compat/package-lock.json

@@ -1,0 +1,118 @@
+{
+  "pandas": [
+    {
+      "name": "df_creation_from_dict",
+      "imports": ["pandas as pd"],
+      "code": "df = pd.DataFrame({'a':[1,2,3],'b':[4,5,6]})\nresult = df.values.tolist()"
+    },
+    {
+      "name": "df_basic_aggregation",
+      "imports": ["pandas as pd"],
+      "code": "df = pd.DataFrame({'x':[1,2,3,4,5]})\nresult = {'sum':float(df.x.sum()), 'mean':float(df.x.mean()), 'std':round(float(df.x.std()),6)}"
+    },
+    {
+      "name": "df_groupby_agg",
+      "imports": ["pandas as pd"],
+      "code": "df = pd.DataFrame({'g':['a','b','a','b','a'],'v':[1,2,3,4,5]})\ng = df.groupby('g').agg({'v':['sum','mean','count']})\nresult = g.to_dict()"
+    },
+    {
+      "name": "df_merge_inner",
+      "imports": ["pandas as pd"],
+      "code": "a = pd.DataFrame({'k':[1,2,3],'va':['x','y','z']})\nb = pd.DataFrame({'k':[2,3,4],'vb':['p','q','r']})\nm = a.merge(b,on='k',how='inner')\nresult = m.values.tolist()"
+    },
+    {
+      "name": "df_merge_left",
+      "imports": ["pandas as pd"],
+      "code": "a = pd.DataFrame({'k':[1,2,3],'va':['x','y','z']})\nb = pd.DataFrame({'k':[2,3,4],'vb':['p','q','r']})\nm = a.merge(b,on='k',how='left')\nresult = m.fillna('NA').values.tolist()"
+    },
+    {
+      "name": "df_apply_lambda",
+      "imports": ["pandas as pd"],
+      "code": "df = pd.DataFrame({'a':[1,2,3,4,5]})\nresult = df.a.apply(lambda x: x*x).tolist()"
+    },
+    {
+      "name": "df_string_ops",
+      "imports": ["pandas as pd"],
+      "code": "s = pd.Series(['Hello','World','Foo','Bar'])\nresult = {'upper': s.str.upper().tolist(), 'len': s.str.len().tolist(), 'starts_h': s.str.startswith('H').tolist()}"
+    },
+    {
+      "name": "df_date_parsing",
+      "imports": ["pandas as pd"],
+      "code": "s = pd.to_datetime(['2026-01-01','2026-06-15','2026-12-31'])\nresult = {'years': s.year.tolist(), 'months': s.month.tolist(), 'days': s.day.tolist()}"
+    },
+    {
+      "name": "df_missing_data",
+      "imports": ["pandas as pd", "numpy as np"],
+      "code": "df = pd.DataFrame({'a':[1,np.nan,3,np.nan,5],'b':[np.nan,2,3,4,np.nan]})\nresult = {'fillna_zero': df.fillna(0).values.tolist(), 'dropped': df.dropna().values.tolist()}"
+    },
+    {
+      "name": "df_pivot",
+      "imports": ["pandas as pd"],
+      "code": "df = pd.DataFrame({'r':['a','a','b','b'],'c':['x','y','x','y'],'v':[1,2,3,4]})\np = df.pivot(index='r',columns='c',values='v')\nresult = p.to_dict()"
+    },
+    {
+      "name": "df_rolling_window",
+      "imports": ["pandas as pd"],
+      "code": "s = pd.Series([1,2,3,4,5,6,7,8,9,10])\nresult = s.rolling(window=3).mean().fillna(-1).tolist()"
+    },
+    {
+      "name": "df_csv_from_stringio",
+      "imports": ["pandas as pd", "io"],
+      "code": "csv = 'a,b,c\\n1,2,3\\n4,5,6\\n7,8,9'\ndf = pd.read_csv(io.StringIO(csv))\nresult = df.values.tolist()"
+    }
+  ],
+  "numpy": [
+    {
+      "name": "arr_creation_basic",
+      "imports": ["numpy as np"],
+      "code": "a = np.array([1,2,3,4,5])\nresult = {'sum':int(a.sum()), 'mean':float(a.mean()), 'std':round(float(a.std()),6)}"
+    },
+    {
+      "name": "matrix_multiply",
+      "imports": ["numpy as np"],
+      "code": "a = np.arange(12).reshape(3,4)\nb = np.arange(12).reshape(4,3)\nresult = (a @ b).tolist()"
+    },
+    {
+      "name": "linalg_solve",
+      "imports": ["numpy as np"],
+      "code": "A = np.array([[2.0,1.0],[1.0,3.0]])\nb = np.array([5.0,10.0])\nx = np.linalg.solve(A,b)\nresult = [round(float(v),6) for v in x]"
+    },
+    {
+      "name": "broadcasting",
+      "imports": ["numpy as np"],
+      "code": "a = np.array([[1,2,3],[4,5,6]])\nb = np.array([10,20,30])\nresult = (a + b).tolist()"
+    },
+    {
+      "name": "boolean_indexing",
+      "imports": ["numpy as np"],
+      "code": "a = np.arange(20)\nresult = a[a % 3 == 0].tolist()"
+    },
+    {
+      "name": "random_seeded",
+      "imports": ["numpy as np"],
+      "code": "rng = np.random.default_rng(42)\nv = rng.normal(0,1,5)\nresult = [round(float(x),6) for x in v]"
+    }
+  ],
+  "sklearn": [
+    {
+      "name": "linear_regression",
+      "imports": ["numpy as np", "sklearn.linear_model"],
+      "code": "X = np.array([[1],[2],[3],[4],[5]])\ny = np.array([2,4,6,8,10])\nm = sklearn.linear_model.LinearRegression().fit(X,y)\nresult = {'coef': round(float(m.coef_[0]),6), 'intercept': round(float(m.intercept_),6)}"
+    },
+    {
+      "name": "kmeans_simple",
+      "imports": ["numpy as np", "sklearn.cluster"],
+      "code": "X = np.array([[1,1],[1,2],[2,1],[10,10],[10,11],[11,10]])\nm = sklearn.cluster.KMeans(n_clusters=2, random_state=42, n_init=10).fit(X)\nlabels = sorted(set(m.labels_.tolist()))\nresult = {'n_unique_labels': len(labels), 'inertia_under_5': bool(m.inertia_ < 5)}"
+    },
+    {
+      "name": "train_test_split",
+      "imports": ["numpy as np", "sklearn.model_selection"],
+      "code": "X = np.arange(100).reshape(50,2)\ny = np.arange(50)\nXtr, Xte, ytr, yte = sklearn.model_selection.train_test_split(X, y, test_size=0.2, random_state=42)\nresult = {'train_size': len(ytr), 'test_size': len(yte)}"
+    },
+    {
+      "name": "label_encoder",
+      "imports": ["sklearn.preprocessing"],
+      "code": "le = sklearn.preprocessing.LabelEncoder()\nresult = le.fit_transform(['cat','dog','cat','bird','dog']).tolist()"
+    }
+  ]
+}
