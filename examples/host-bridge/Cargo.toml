@@ -1,0 +1,19 @@
+[package]
+name = "wisp-example-host-bridge"
+version = "0.0.1"
+edition = "2021"
+description = "End-to-end demo: Python sandbox calls into a host-provided capability via _wisp.call_host"
+publish = false
+
+[dependencies]
+wasmtime = "27"
+wasmtime-wasi = "27"
+anyhow = "1"
+
+[[bin]]
+name = "host-bridge"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
