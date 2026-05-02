@@ -4,7 +4,7 @@
 
 ## 1. The Problem
 
-Today's serverless platforms (AWS Lambda, Modal, Vercel Functions) were designed for **HTTP request/response** and **ML batch jobs**. AI agents have a different workload profile.
+Today's Python serverless platforms were designed for **HTTP request/response** and **ML batch jobs**. AI agents have a different workload profile.
 
 ### Agent workload, measured
 
@@ -27,11 +27,11 @@ A representative agent (Claude Code / Cursor style) tool-call distribution per t
 
 50 tool calls per task × cold-start overhead:
 
-| Runtime | Per-call cold start | Total overhead | UX |
+| Runtime category | Per-call cold start | Total overhead | UX |
 |---|---|---|---|
-| AWS Lambda | 800 ms | 40 s | unusable |
-| Modal (cold) | 1,500 ms | 75 s | user walks away |
-| Modal (warm pool) | 50 ms | 2.5 s | acceptable |
+| General-purpose serverless (Lambda-class) | 800 ms | 40 s | unusable |
+| ML-focused uVM-per-invocation (cold) | 1,500 ms | 75 s | user walks away |
+| ML-focused uVM-per-invocation (warm pool) | 50 ms | 2.5 s | acceptable |
 | **Wisp WASM path** | **5 ms** | **0.25 s** | feels instant |
 
 ## 2. The Wedge
@@ -41,7 +41,7 @@ Build a runtime tuned for the agent call pattern: **high frequency, short durati
 Two design choices flow from this:
 
 1. **Hybrid runtime**: WASM fast path for the 80%, native fallback for the 20%. Automatic routing based on static analysis of imports.
-2. **Sub-millisecond billing + WASM economics**: simple calls are effectively free. Complex calls priced like Modal. This unbundles the unit economics that today's platforms can't reach.
+2. **Sub-millisecond execution + WASM economics**: simple calls finish in 1–5 ms of compute. On self-hosted Wisp this is roughly two orders of magnitude less compute per call than current uVM-per-invocation platforms — high-frequency simple calls become effectively free.
 
 ## 3. Architecture
 
@@ -105,7 +105,7 @@ Target: <100 ms p50, <300 ms p99.
   Total ..................................... ~50-100 ms (fast)
 ```
 
-This is the same trick Modal uses, but with one structural improvement: each tenant gets a **per-tenant pre-warmed master process** inside its own uVM, so `fork()` is cheap *and* isolation is uVM-grade. Modal cross-tenant isolates at the uVM boundary but spins fresh Python interpreters inside.
+This builds on the same fork-based serverless trick proposed in academic work (SOCK, Catalyzer, Faasm), with one structural improvement: each tenant gets a **per-tenant pre-warmed master process** inside its own uVM, so `fork()` is cheap *and* isolation is uVM-grade. The per-invocation interpreter pattern used by current ML-focused platforms cross-tenant-isolates at the uVM boundary but spins fresh Python interpreters inside, which costs ~1s of cold start.
 
 ### Smart Router
 
@@ -140,33 +140,33 @@ Most agent tool calls are stateless. For the calls that *do* need state (e.g., a
 - **Session-local KV** (Redis-class): low-latency state next to the runtime.
 - **Long-running process within a session**: an opt-in primitive — your function returns a generator, Wisp keeps it alive, subsequent calls resume.
 
-Important: this is a *first-class agent abstraction*, not a workflow framework on top. Modal/Lambda treat state as foreign (mount a volume).
+Important: this is a *first-class agent abstraction*, not a workflow framework on top. Existing Python serverless platforms treat state as foreign — you mount a volume or read from an external KV with 10–100ms overhead per access.
 
-## 4. Why this is hard for incumbents
+## 4. Why this is hard for the existing serverless landscape to copy
 
-### Modal can't easily pivot
+The dominant Python serverless platforms in 2026 fall into three categories. Each has a structural floor on cold start that no incremental engineering closes.
 
-- Their cold start is 1–3 s in steady state because they spin a fresh Python interpreter per invocation inside a Firecracker uVM. Architecturally, they bet on warm pools + pricing tolerance for ML.
-- Their billing model (per-second, 200 ms minimum) makes 1 ms calls financially unattractive for them — they can't undercut us on simple calls without re-engineering.
-- Their customer base is ML training/inference, not agent tool calls. Different sales motion, different SLAs, different SDK ergonomics.
+### ML-focused per-invocation Python platforms
 
-### AWS Lambda can't pivot
+The standard pattern: a Firecracker (or similar) microVM boots, a fresh Python interpreter starts, the user's code imports its dependencies, runs, and exits. This delivers strong tenant isolation and works well for ML batch jobs where 1–3s of startup is amortized over minutes of compute.
 
-- Architecturally similar to Modal but slower (cold start 800 ms+ for Python with deps).
-- Strong enterprise/long-standing customer base ties them to backward compatibility.
+For agent tool calls — where each call does <50ms of real work — the same pattern is fundamentally wrong-shaped. The interpreter-per-invocation model has a hard floor of ~1s for any non-trivial dep set, and platforms anchored to ML workloads have no internal pull to rebuild around a different floor.
 
-### Cloudflare Workers (the closest) can't fully pivot
+### General-purpose function platforms (Lambda-class)
 
-- Already WASM-first, fast (5–50 ms cold).
-- But Python support via Pyodide is in beta and limited.
-- Built on V8 isolates, which are fast for JS but not the right substrate for the full Python ecosystem fallback.
-- They optimize for HTTP edge, not agent tool-call patterns (no first-class session, no long-running process primitive).
+Python cold starts of 800ms+ for typical dependency sets. Architecturally similar to the ML-focused category but without warm-pool optimization. Long backward-compatibility commitments (decade-old contracts in some cases) lock these platforms into their current cold-start model.
 
-### Vercel Sandbox
+### Edge V8-isolate platforms
 
-- Newer, GA Jan 2026.
-- General-purpose code exec, not agent-tuned.
-- Doesn't compete on cold start with WASM-first.
+Already WASM-first, with single-digit-ms cold start for JavaScript. Python support via Pyodide is improving but in beta and limited as of 2026. The V8 isolate substrate is great for JavaScript but not the right base for a full Python ecosystem fallback. These platforms optimize for HTTP edge cases, not agent tool-call patterns — no first-class session abstraction, no long-running process primitive co-located with the runtime.
+
+### General-purpose code-execution sandboxes
+
+Newer entries focused on running untrusted code (e.g., LLM-generated). Per-session microVM startup is in the 100–500ms range, not the per-call 1ms range. Different design point — sandbox-per-session, not sandbox-per-tool-call.
+
+### Where Wisp sits
+
+Wisp's bet is that **agent workloads need a runtime that's WASM-first by default and falls back to native only when imports demand it** — and the same project can serve the whole agentic-workload spectrum from per-user agent serving to high-volume RL training rollouts. None of the categories above is structured to make that bet without a fundamental rebuild.
 
 ## 5. Open questions
 
@@ -181,9 +181,10 @@ These are the things we don't know yet and need to validate:
 ## 6. What we are NOT building
 
 - We are not a workflow / DAG orchestrator (that's Argo / Dagster / Inngest).
-- We are not a model serving platform (that's vLLM / Triton / Modal).
+- We are not a model serving platform (that's vLLM / Triton).
 - We are not a general K8s replacement.
-- We are not a vertical agent framework (that's LangChain / LlamaIndex / Cursor's runtime).
+- We are not an agent application framework (that's LangChain / LlamaIndex / Mastra / Letta).
+- We are not a code-execution sandbox for security audit (that's a different design point).
 
 We are a **runtime layer** for the function calls those higher-level systems make.
 
@@ -191,11 +192,11 @@ We are a **runtime layer** for the function calls those higher-level systems mak
 
 | Milestone | Target | Deliverable |
 |---|---|---|
-| **M0**: Single-host WASM prototype | 2026 Q2 | `wispd` binary, runs Pyodide functions in <10 ms cold, benchmark vs Modal |
+| **M0**: Single-host WASM prototype | 2026 Q2 | `wispd` binary, runs Pyodide functions in <10 ms cold, reproducible benchmark vs published industry baselines |
 | **M1**: Native fallback path | 2026 Q3 | Firecracker + Python fork pool, smart router |
-| **M2**: Public OSS launch | 2026 Q3 | GitHub release, HN launch, design partner onboarding |
+| **M2**: Public OSS launch | 2026 Q3 | GitHub release, HN launch, first external users running it themselves |
 | **M3**: Multi-tenant cluster | 2026 Q4 | Production scheduler, per-tenant isolation, observability |
-| **M4**: Hosted cloud | 2027 Q1 | wisplab.cloud (or similar), free tier + paid plans |
+| **M4**: Sustainability + v1.0 | 2027 Q1 | governance model, contributor cohort, stable v1.0 API freeze |
 
 ## References
 

@@ -15,10 +15,10 @@ Wisp is built for this call pattern.
 ## Goals
 
 - **<5ms cold start** for the 80% of agent tool calls that don't need the full Python ecosystem (string ops, JSON, basic compute)
-- **Native fallback** for the 20% that does (PyTorch, sklearn, native C extensions) — comparable to Modal cold start (~100–500ms)
-- **Zero configuration**: write a Python function, decorate it, run it. No `Dockerfile`, no `modal.Image.pip_install(...)`, no YAML.
-- **Open source runtime** under Apache 2.0. Closed-source orchestration / cloud forms the commercial layer (à la Vercel/Next.js).
-- **Sub-millisecond billing** so high-frequency simple calls are effectively free.
+- **Native fallback** for the 20% that does (PyTorch, sklearn, native C extensions) — ~50–100ms cold start via per-tenant fork pool
+- **Zero configuration**: write a Python function, decorate it, run it. No `Dockerfile`, no image-builder DSL, no YAML.
+- **Apache 2.0, fully open source**. Every layer — runtime, scheduler, SDK, smart router, compat registry — is in this repo.
+- **Sub-millisecond execution** means high-frequency simple calls cost effectively zero compute on self-hosted Wisp.
 
 ## Architecture (working draft)
 
