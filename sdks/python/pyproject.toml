@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wisp-client"
+version = "0.1.0"
+description = "Python client for the Wisp host-runtime daemon"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Wisp" }]
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["wisp*"]
