@@ -73,7 +73,7 @@ int32_t wisp_init(void) {
     int rc = PyRun_SimpleString(
         "import sys, os, io, re, json, math, time, datetime, "
         "collections, itertools, functools, hashlib, base64, struct, "
-        "urllib.parse\n"
+        "urllib.parse, sqlite3\n"
     );
     return rc == 0 ? 0 : -20;
 }

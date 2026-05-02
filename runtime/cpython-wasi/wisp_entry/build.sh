@@ -51,6 +51,7 @@ echo "==> Compiling wisp_entry.c + libpython3.14.a → python-reactor.wasm"
   "$WASI_BUILD_DIR/Modules/_hacl/libHacl_HMAC.a" \
   "$WASI_BUILD_DIR/Modules/_hacl/libHacl_Hash_SHA2.a" \
   -L"$ROOT/vendor/zlib-1.3.1" -lz \
+  -L"$ROOT/vendor/sqlite-amalgamation-3530000" -lsqlite3 \
   -ldl \
   -lwasi-emulated-getpid \
   -lwasi-emulated-signal \
