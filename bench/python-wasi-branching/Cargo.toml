@@ -1,0 +1,20 @@
+[package]
+name = "wisp-python-wasi-branching"
+version = "0.0.1"
+edition = "2021"
+description = "Phase 0 Spike B: branching session — K-way parallel fork from one snapshot"
+publish = false
+
+[dependencies]
+wasmtime = "27"
+wasmtime-wasi = "27"
+anyhow = "1"
+rayon = "1"
+
+[[bin]]
+name = "py-branching"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
