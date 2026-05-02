@@ -1,0 +1,6 @@
+# Toolchain (download artifacts, large)
+*/toolchain/
+# Vendored upstream sources (re-cloneable from git tags)
+*/vendor/
+# Build outputs
+*/build/
