@@ -228,6 +228,9 @@ fn run_branch(
 ) -> Result<i32> {
     let mut linker: Linker<WasiP1Ctx> = Linker::new(engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
+    linker.func_wrap("env", "host_call",
+        |_c: wasmtime::Caller<'_, WasiP1Ctx>,
+         _np: i32, _nl: i32, _pp: i32, _pl: i32, _rp: i32, _rm: i32| -> i32 { -1 })?;
     let wasi = make_wasi(host_root)?;
     let mut store = Store::new(engine, wasi);
     let inst = linker.instantiate(&mut store, &module)?;
@@ -290,6 +293,9 @@ fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, 
 
     let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
+    linker.func_wrap("env", "host_call",
+        |_c: wasmtime::Caller<'_, WasiP1Ctx>,
+         _np: i32, _nl: i32, _pp: i32, _pl: i32, _rp: i32, _rm: i32| -> i32 { -1 })?;
     let wasi = make_wasi(host_root)?;
     let mut store = Store::new(&engine, wasi);
     let inst = linker.instantiate(&mut store, &module)?;

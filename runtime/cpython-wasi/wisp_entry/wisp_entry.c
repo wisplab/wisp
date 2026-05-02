@@ -8,8 +8,13 @@
  *
  * The host can also snapshot linear memory between wisp_init and the first
  * wisp_eval, then memcpy that snapshot into a fresh instance and jump
- * straight to wisp_eval. That's the per-call sandbox primitive we want
- * to demonstrate in Spike A2.
+ * straight to wisp_eval. That's the per-call sandbox primitive.
+ *
+ * The host bridge: WASI Preview 1 has no sockets / subprocess / threads.
+ * Sandboxed code that needs an outside capability (HTTP fetch, key/value
+ * lookup, secret retrieval, etc.) goes through `_wisp.call_host(name,
+ * payload)` which calls into a host-provided WASM import. The host
+ * decides which capability names are exposed; the sandbox cannot bypass.
  */
 
 #include <stdint.h>
@@ -20,7 +25,7 @@
 #include <Python.h>
 
 /* WASI Reactor calls __wasm_call_ctors via _initialize automatically.
- * After that, the host can call any export. We expose four:
+ * After that, the host can call any export. We expose:
  *
  *   wisp_init()                         -> int    initialize Python runtime
  *   wisp_eval(ptr, len)                 -> int    run Python source from linear memory
@@ -30,12 +35,106 @@
  * The alloc/free pair lets the host write source bytes into wasm memory
  * before calling wisp_eval. Both pointers are 32-bit offsets into the
  * single linear memory.
+ *
+ * And we IMPORT one function from the host:
+ *
+ *   env::host_call(name_ptr, name_len, payload_ptr, payload_len,
+ *                  result_ptr, result_max) -> int  bytes written or -err
+ *
+ * The host implements this. From Python: `_wisp.call_host(name, payload)`.
  */
+
+/* ------------------------------------------------------------------------
+ * Host bridge import + Python binding
+ * ------------------------------------------------------------------------ */
+
+__attribute__((import_module("env"), import_name("host_call")))
+extern int32_t host_call(
+    const char *name_ptr,    int32_t name_len,
+    const char *payload_ptr, int32_t payload_len,
+    char       *result_ptr,  int32_t result_max
+);
+
+/* Lazily-allocated shared response buffer. Single-threaded reactor: one
+ * call returns before the next starts. Python copies the bytes out into a
+ * PyBytes object before any host code runs again. The buffer is malloc'd
+ * on first use so that snapshots taken before any host_call (the common
+ * case — wisp_init pre-imports _wisp but doesn't call into the host) stay
+ * compact: the 1 MB doesn't enter the snapshot. */
+#define WISP_RESPONSE_BUF_SIZE (1u << 20)
+static char *wisp_response_buf = NULL;
+
+static PyObject *_wisp_call_host(PyObject *self, PyObject *args) {
+    const char *name; Py_ssize_t name_len;
+    const char *payload; Py_ssize_t payload_len;
+    if (!PyArg_ParseTuple(args, "y#y#", &name, &name_len, &payload, &payload_len)) {
+        return NULL;
+    }
+    if (name_len > 0xffff || payload_len > (Py_ssize_t)WISP_RESPONSE_BUF_SIZE) {
+        PyErr_SetString(PyExc_ValueError,
+            "name or payload exceeds bridge limit");
+        return NULL;
+    }
+    if (!wisp_response_buf) {
+        wisp_response_buf = (char *)malloc(WISP_RESPONSE_BUF_SIZE);
+        if (!wisp_response_buf) {
+            PyErr_NoMemory();
+            return NULL;
+        }
+    }
+
+    int32_t n = host_call(name, (int32_t)name_len,
+                          payload, (int32_t)payload_len,
+                          wisp_response_buf, (int32_t)WISP_RESPONSE_BUF_SIZE);
+    if (n < 0) {
+        PyErr_Format(PyExc_RuntimeError,
+            "wisp.host_call(%R) failed: host returned %d",
+            PyBytes_FromStringAndSize(name, name_len), (int)n);
+        return NULL;
+    }
+    if (n > (int32_t)WISP_RESPONSE_BUF_SIZE) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "host wrote past response buffer");
+        return NULL;
+    }
+    return PyBytes_FromStringAndSize(wisp_response_buf, n);
+}
+
+static PyMethodDef _wisp_methods[] = {
+    {"call_host", _wisp_call_host, METH_VARARGS,
+        "call_host(name: bytes, payload: bytes) -> bytes\n"
+        "Synchronous bridge to the host runtime. The host decides which "
+        "names are exposed; the sandbox cannot enumerate or bypass."},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef _wisp_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "_wisp",
+    "Sandbox <-> host bridge for the Wisp WASI Python runtime.",
+    -1,
+    _wisp_methods,
+    NULL, NULL, NULL, NULL
+};
+
+static PyObject *PyInit__wisp(void) {
+    return PyModule_Create(&_wisp_module_def);
+}
+
+/* ------------------------------------------------------------------------
+ * Reactor exports
+ * ------------------------------------------------------------------------ */
 
 __attribute__((export_name("wisp_init")))
 int32_t wisp_init(void) {
     if (Py_IsInitialized()) {
         return 0;
+    }
+
+    /* Register the _wisp builtin BEFORE Py_InitializeFromConfig so the
+     * subsequent `import _wisp` resolves it. */
+    if (PyImport_AppendInittab("_wisp", PyInit__wisp) != 0) {
+        return -30;
     }
 
     /* Use the modern PyConfig embedding API. Default Py_InitializeEx skips
@@ -69,11 +168,13 @@ int32_t wisp_init(void) {
     }
 
     /* Pre-import commonly used modules so they're in sys.modules at snapshot
-     * time. Subsequent `import X` in wisp_eval becomes a dict lookup. */
+     * time. Subsequent `import X` in wisp_eval becomes a dict lookup.
+     * _wisp goes in too so Python code can use the bridge without a fresh
+     * import on every call. */
     int rc = PyRun_SimpleString(
         "import sys, os, io, re, json, math, time, datetime, "
         "collections, itertools, functools, hashlib, base64, struct, "
-        "urllib.parse, sqlite3, _hashlib\n"
+        "urllib.parse, sqlite3, _hashlib, _wisp\n"
     );
     return rc == 0 ? 0 : -20;
 }

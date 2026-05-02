@@ -121,6 +121,9 @@ fn run_loop(
     for _ in 0..WARMUP {
         let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
         wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
+        linker.func_wrap("env", "host_call",
+            |_c: wasmtime::Caller<'_, WasiP1Ctx>,
+             _np: i32, _nl: i32, _pp: i32, _pl: i32, _rp: i32, _rm: i32| -> i32 { -1 })?;
         let wasi = make_wasi(host_root, code)?;
         let mut store = Store::new(&engine, wasi);
         let inst = linker.instantiate(&mut store, &module)?;
@@ -140,6 +143,9 @@ fn run_loop(
         let l_t = Instant::now();
         let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
         wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
+        linker.func_wrap("env", "host_call",
+            |_c: wasmtime::Caller<'_, WasiP1Ctx>,
+             _np: i32, _nl: i32, _pp: i32, _pl: i32, _rp: i32, _rm: i32| -> i32 { -1 })?;
         p.linker.record(l_t);
 
         let i_t = Instant::now();
