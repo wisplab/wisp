@@ -1,0 +1,21 @@
+[package]
+name = "wisp-python-wasi-cow-branching"
+version = "0.0.1"
+edition = "2021"
+description = "Phase 0 Spike B2: K-way fork with mmap COW backend (memcpy-free branching)"
+publish = false
+
+[dependencies]
+wasmtime = "27"
+wasmtime-wasi = "27"
+anyhow = "1"
+libc = "0.2"
+rayon = "1"
+
+[[bin]]
+name = "py-cow-branching"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
