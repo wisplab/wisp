@@ -1,0 +1,20 @@
+[package]
+name = "wisp-python-wasi-cow"
+version = "0.0.1"
+edition = "2021"
+description = "Phase 0 Spike A2.1: WASI Python per-call sandbox via mmap COW snapshot"
+publish = false
+
+[dependencies]
+wasmtime = "27"
+wasmtime-wasi = "27"
+anyhow = "1"
+libc = "0.2"
+
+[[bin]]
+name = "py-cow"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
