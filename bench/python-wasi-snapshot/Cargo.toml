@@ -1,0 +1,19 @@
+[package]
+name = "wisp-python-wasi-snapshot"
+version = "0.0.1"
+edition = "2021"
+description = "Phase 0 Spike A2: WASI Python per-call sandbox via linear-memory snapshot/restore"
+publish = false
+
+[dependencies]
+wasmtime = "27"
+wasmtime-wasi = "27"
+anyhow = "1"
+
+[[bin]]
+name = "py-snapshot"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
