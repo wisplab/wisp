@@ -23,6 +23,9 @@
 //! Day-1 goal is "anyone can `cargo run` and curl localhost:9000 to run
 //! Python in a fresh WASM sandbox sub-millisecond."
 
+mod capabilities;
+use capabilities::Capabilities;
+
 use anyhow::{anyhow, Result};
 use axum::{
     extract::State,
@@ -243,6 +246,7 @@ struct Runtime {
     snapshot_pages: u64,
     snapshot_fd: RawFd,
     host_root: String,
+    capabilities: Arc<Capabilities>,
 }
 
 fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, u64)> {
@@ -291,7 +295,12 @@ fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, 
     Ok((bytes, pages))
 }
 
-fn build_runtime(python_wasm: PathBuf, host_root: String, snapshot_path: PathBuf) -> Result<Runtime> {
+fn build_runtime(
+    python_wasm: PathBuf,
+    host_root: String,
+    snapshot_path: PathBuf,
+    capabilities: Arc<Capabilities>,
+) -> Result<Runtime> {
     info!("capturing initial snapshot...");
     let t = Instant::now();
     let (snapshot, snapshot_pages) = capture_snapshot(&host_root, &python_wasm)?;
@@ -332,6 +341,7 @@ fn build_runtime(python_wasm: PathBuf, host_root: String, snapshot_path: PathBuf
         snapshot_pages,
         snapshot_fd,
         host_root,
+        capabilities,
     })
 }
 
@@ -372,17 +382,50 @@ fn run_one(rt: &Runtime, code: &str) -> Result<EvalResponse> {
 
     let mut linker: Linker<WasiP1Ctx> = Linker::new(&rt.engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
+    let caps = rt.capabilities.clone();
     linker.func_wrap(
         "env",
         "host_call",
-        |_c: Caller<'_, WasiP1Ctx>,
-         _np: i32,
-         _nl: i32,
-         _pp: i32,
-         _pl: i32,
-         _rp: i32,
-         _rm: i32|
-         -> i32 { -1 }, // capability bridge stubbed for V1
+        move |mut caller: Caller<'_, WasiP1Ctx>,
+              name_ptr: i32,
+              name_len: i32,
+              payload_ptr: i32,
+              payload_len: i32,
+              result_ptr: i32,
+              result_max: i32|
+              -> i32 {
+            let mem = match caller.get_export("memory") {
+                Some(Extern::Memory(m)) => m,
+                _ => return -100,
+            };
+            let mut name_buf = vec![0u8; name_len as usize];
+            if mem.read(&caller, name_ptr as usize, &mut name_buf).is_err() {
+                return -101;
+            }
+            let mut payload_buf = vec![0u8; payload_len as usize];
+            if mem
+                .read(&caller, payload_ptr as usize, &mut payload_buf)
+                .is_err()
+            {
+                return -101;
+            }
+            let name = std::str::from_utf8(&name_buf).unwrap_or("");
+            match caps.dispatch(name, &payload_buf) {
+                Ok(response) => {
+                    if response.len() > result_max as usize {
+                        return capabilities::RC_RESPONSE_TOO_LARGE;
+                    }
+                    if mem
+                        .write(&mut caller, result_ptr as usize, &response)
+                        .is_err()
+                    {
+                        return -103;
+                    }
+                    response.len() as i32
+                }
+                Err(rc) => rc,
+            }
+        },
     )?;
 
     let mut b = WasiCtxBuilder::new();
@@ -526,6 +569,17 @@ enum Job {
     },
 }
 
+fn load_capabilities() -> Result<Capabilities> {
+    if let Ok(path) = std::env::var("WISP_CAPABILITIES_JSON") {
+        let bytes = std::fs::read(&path)
+            .map_err(|e| anyhow!("failed to read {path}: {e}"))?;
+        Ok(serde_json::from_slice(&bytes)
+            .map_err(|e| anyhow!("failed to parse {path}: {e}"))?)
+    } else {
+        Ok(Capabilities::default())
+    }
+}
+
 fn worker_loop(rt: Arc<Runtime>, rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Job>>>) {
     loop {
         let job = {
@@ -569,9 +623,20 @@ fn main() -> Result<()> {
 
     info!(?python_wasm, ?host_root, ?snapshot_path, ?bind, workers, "starting wisp-runtime");
 
+    // Capability config: load from $WISP_CAPABILITIES_JSON file if set,
+    // otherwise default to no capabilities (sandbox can run pure Python
+    // but cannot reach out — same default as no host bridge at all).
+    let capabilities = Arc::new(load_capabilities()?);
+    info!(?capabilities, "loaded capability config");
+
     // Sync phase — capture snapshot, build the COW-mounted engine. No
     // tokio runtime is active yet, so wasmtime-wasi's sync API is happy.
-    let runtime = Arc::new(build_runtime(python_wasm, host_root, snapshot_path)?);
+    let runtime = Arc::new(build_runtime(
+        python_wasm,
+        host_root,
+        snapshot_path,
+        capabilities,
+    )?);
 
     // Worker pool — dedicated OS threads, no tokio context.
     let (tx, rx) = std::sync::mpsc::channel::<Job>();

@@ -16,6 +16,7 @@ tokio.workspace = true
 axum.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+base64 = "0.22"
 
 [[bin]]
 name = "wisp-runtime"
