@@ -35,9 +35,11 @@ import _wisp  # provided by the runtime; not importable outside wisp
 __all__ = [
     "WispError",
     "ShellResult",
+    "WebFetchResult",
     "shell",
     "file_read",
     "file_write",
+    "web_fetch",
     "call_host",
 ]
 
@@ -55,6 +57,33 @@ class ShellResult:
     @property
     def ok(self) -> bool:
         return self.rc == 0
+
+
+@dataclass
+class WebFetchResult:
+    """Result of `wisp.web_fetch(...)`.
+
+    `body` is always raw bytes — caller decodes (`.decode("utf-8")`,
+    `json.loads(r.body)`, etc.). Headers are a dict of lower-cased
+    keys. The host doesn't follow redirects, so 3xx responses are
+    surfaced as-is — read `headers["location"]` to follow manually.
+    """
+
+    status: int
+    headers: dict
+    body: bytes
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status < 300
+
+    def json(self):
+        """Decode body as JSON. Raises ValueError on non-JSON."""
+        import json as _j
+        return _j.loads(self.body)
+
+    def text(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        return self.body.decode(encoding, errors)
 
 
 def call_host(
@@ -137,3 +166,48 @@ def file_write(
     )
     obj = _json.loads(raw)
     return int(obj["bytes_written"])
+
+
+def web_fetch(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: Optional[Mapping[str, str]] = None,
+    data: Union[bytes, str, Mapping, list, tuple, None] = None,
+) -> WebFetchResult:
+    """Make an outbound HTTP(S) request via the host's `web_fetch` capability.
+
+    The host enforces a host allowlist (e.g. `*.openai.com`) and a
+    method allowlist (default GET-only). Redirects are NOT followed —
+    if you need to handle them, check `result.status` and the
+    `result.headers["location"]` value.
+
+    `data` accepts the same shapes as `call_host`: bytes (verbatim),
+    str (UTF-8 encoded), or dict/list/tuple (JSON-encoded; the
+    `Content-Type: application/json` header is set automatically if not
+    already present).
+    """
+    payload: dict = {"url": url, "method": method.upper()}
+    final_headers = dict(headers) if headers else {}
+    if data is None:
+        body_bytes = b""
+    elif isinstance(data, bytes):
+        body_bytes = data
+    elif isinstance(data, str):
+        body_bytes = data.encode("utf-8")
+    elif isinstance(data, (Mapping, list, tuple)):
+        body_bytes = _json.dumps(data).encode("utf-8")
+        if not any(k.lower() == "content-type" for k in final_headers):
+            final_headers["Content-Type"] = "application/json"
+    else:
+        raise TypeError(f"unsupported data type: {type(data).__name__}")
+    if body_bytes:
+        payload["body_b64"] = _base64.b64encode(body_bytes).decode("ascii")
+    if final_headers:
+        payload["headers"] = final_headers
+    raw = call_host("web_fetch", payload)
+    obj = _json.loads(raw)
+    body = _base64.b64decode(obj["body_b64"]) if obj.get("body_b64") else b""
+    # Lower-case header keys for ergonomic case-insensitive lookup.
+    hdrs = {k.lower(): v for k, v in (obj.get("headers") or {}).items()}
+    return WebFetchResult(status=int(obj["status"]), headers=hdrs, body=body)

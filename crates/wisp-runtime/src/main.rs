@@ -48,6 +48,21 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 const PYTHONPATH_GUEST: &str = "/cross-build/wasm32-wasip1/build/lib.wasi-wasm32-3.14";
 
+/// Guest path where the host's `wisp_python_lib` directory is mounted —
+/// gives sandbox Python `import wisp`. CPython on WASI's startup parser
+/// only honors ONE PYTHONPATH entry (does not split on `:`), so we add
+/// the wisp-lib path to `sys.path` via a bootstrap eval after wisp_init.
+const WISP_LIB_GUEST: &str = "/wisp_lib";
+
+/// Run after `wisp_init` and BEFORE we capture the snapshot, so every
+/// per-call instance starts with `wisp` already imported (no per-call
+/// import cost) and `/wisp_lib` already on sys.path.
+const SNAPSHOT_BOOTSTRAP_PY: &str = "\
+import sys
+sys.path.insert(0, '/wisp_lib')
+import wisp
+";
+
 // =====================================================================
 // CowMemoryCreator — same as bench/python-wasi-cow. Mmaps the snapshot
 // file MAP_PRIVATE; per-call MAP_FIXED reset undoes wasmtime's data-init
@@ -246,10 +261,15 @@ struct Runtime {
     snapshot_pages: u64,
     snapshot_fd: RawFd,
     host_root: String,
+    wisp_lib_root: Option<String>,
     capabilities: Arc<Capabilities>,
 }
 
-fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, u64)> {
+fn capture_snapshot(
+    host_root: &str,
+    wisp_lib_root: Option<&str>,
+    python_wasm: &PathBuf,
+) -> Result<(Vec<u8>, u64)> {
     let mut config = Config::new();
     config.async_support(false);
     let engine = Engine::new(&config)?;
@@ -276,6 +296,9 @@ fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, 
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONHOME", "/")
         .preopened_dir(host_root, "/", DirPerms::READ, FilePerms::READ)?;
+    if let Some(lib) = wisp_lib_root {
+        b.preopened_dir(lib, WISP_LIB_GUEST, DirPerms::READ, FilePerms::READ)?;
+    }
     let wasi = b.build_p1();
     let mut store = Store::new(&engine, wasi);
     let inst = linker.instantiate(&mut store, &module)?;
@@ -287,6 +310,29 @@ fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, 
     if rc != 0 {
         return Err(anyhow!("wisp_init returned {rc} during snapshot capture"));
     }
+
+    // Bootstrap: pre-import the wisp helper module if its mount is set
+    // up, so every per-call instance starts with sys.modules["wisp"]
+    // already populated. Without this, the first user `import wisp` in
+    // each call pays the .py parse + bytecode compile cost (~30 ms).
+    if wisp_lib_root.is_some() {
+        let alloc = inst.get_typed_func::<i32, i32>(&mut store, "wisp_alloc")?;
+        let eval = inst.get_typed_func::<(i32, i32), i32>(&mut store, "wisp_eval")?;
+        let mem = inst
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("no memory export during bootstrap"))?;
+        let src = SNAPSHOT_BOOTSTRAP_PY.as_bytes();
+        let ptr = alloc.call(&mut store, src.len() as i32)?;
+        mem.data_mut(&mut store)[ptr as usize..ptr as usize + src.len()]
+            .copy_from_slice(src);
+        let brc = eval.call(&mut store, (ptr, src.len() as i32))?;
+        if brc != 0 {
+            return Err(anyhow!(
+                "snapshot bootstrap (`import wisp`) returned rc={brc}"
+            ));
+        }
+    }
+
     let mem = inst
         .get_memory(&mut store, "memory")
         .ok_or_else(|| anyhow!("no memory export"))?;
@@ -298,12 +344,14 @@ fn capture_snapshot(host_root: &str, python_wasm: &PathBuf) -> Result<(Vec<u8>, 
 fn build_runtime(
     python_wasm: PathBuf,
     host_root: String,
+    wisp_lib_root: Option<String>,
     snapshot_path: PathBuf,
     capabilities: Arc<Capabilities>,
 ) -> Result<Runtime> {
     info!("capturing initial snapshot...");
     let t = Instant::now();
-    let (snapshot, snapshot_pages) = capture_snapshot(&host_root, &python_wasm)?;
+    let (snapshot, snapshot_pages) =
+        capture_snapshot(&host_root, wisp_lib_root.as_deref(), &python_wasm)?;
     info!(
         "snapshot captured: {} bytes ({} pages) in {:.0} ms",
         snapshot.len(),
@@ -341,6 +389,7 @@ fn build_runtime(
         snapshot_pages,
         snapshot_fd,
         host_root,
+        wisp_lib_root,
         capabilities,
     })
 }
@@ -435,6 +484,9 @@ fn run_one(rt: &Runtime, code: &str) -> Result<EvalResponse> {
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("PYTHONHOME", "/")
         .preopened_dir(&rt.host_root, "/", DirPerms::READ, FilePerms::READ)?;
+    if let Some(lib) = &rt.wisp_lib_root {
+        b.preopened_dir(lib, WISP_LIB_GUEST, DirPerms::READ, FilePerms::READ)?;
+    }
     let wasi = b.build_p1();
     let mut store = Store::new(&rt.engine, wasi);
     let inst = linker.instantiate(&mut store, &rt.module)?;
@@ -612,6 +664,14 @@ fn main() -> Result<()> {
         .into();
     let host_root = std::env::var("WISP_HOST_ROOT")
         .unwrap_or_else(|_| "runtime/cpython-wasi/vendor/cpython".to_string());
+    // Optional: directory containing `wisp.py`. If present (default), it
+    // gets mounted at `/wisp_lib` and added to the sandbox's PYTHONPATH
+    // so `import wisp` works. Set to empty string to disable.
+    let wisp_lib_root: Option<String> = match std::env::var("WISP_PYTHON_LIB") {
+        Ok(s) if s.is_empty() => None,
+        Ok(s) => Some(s),
+        Err(_) => Some("runtime/cpython-wasi/wisp_python_lib".to_string()),
+    };
     let snapshot_path: PathBuf = std::env::var("WISP_SNAPSHOT_PATH")
         .unwrap_or_else(|_| "/tmp/wisp-runtime-snapshot.bin".to_string())
         .into();
@@ -621,7 +681,7 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
 
-    info!(?python_wasm, ?host_root, ?snapshot_path, ?bind, workers, "starting wisp-runtime");
+    info!(?python_wasm, ?host_root, ?wisp_lib_root, ?snapshot_path, ?bind, workers, "starting wisp-runtime");
 
     // Capability config: load from $WISP_CAPABILITIES_JSON file if set,
     // otherwise default to no capabilities (sandbox can run pure Python
@@ -634,6 +694,7 @@ fn main() -> Result<()> {
     let runtime = Arc::new(build_runtime(
         python_wasm,
         host_root,
+        wisp_lib_root,
         snapshot_path,
         capabilities,
     )?);

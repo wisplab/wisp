@@ -17,6 +17,8 @@ axum.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 base64 = "0.22"
+ureq = { version = "2", features = ["tls", "gzip"] }
+url = "2"
 
 [[bin]]
 name = "wisp-runtime"
