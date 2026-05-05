@@ -1,0 +1,30 @@
+{
+  "_comment": "Example capability config for the OpenCode integration. Copy to wisp-capabilities.json and edit to taste, then start the daemon with: WISP_CAPABILITIES_JSON=$PWD/wisp-capabilities.json cargo run --release -p wisp-runtime",
+
+  "shell": {
+    "allow_commands": ["echo", "ls", "wc", "head", "cat"],
+    "max_output_bytes": 1048576
+  },
+
+  "file_read": {
+    "allow_prefixes": ["/tmp/wisp-workspace"],
+    "max_read_bytes": 16777216
+  },
+
+  "file_write": {
+    "allow_prefixes": ["/tmp/wisp-workspace"],
+    "max_write_bytes": 16777216
+  },
+
+  "web_fetch": {
+    "allow_hosts": [
+      "api.github.com",
+      "*.openai.com",
+      "*.anthropic.com",
+      "raw.githubusercontent.com"
+    ],
+    "allow_methods": ["GET", "POST"],
+    "max_response_bytes": 16777216,
+    "timeout_ms": 30000
+  }
+}
