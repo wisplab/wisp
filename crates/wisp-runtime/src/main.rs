@@ -24,14 +24,16 @@
 //! Python in a fresh WASM sandbox sub-millisecond."
 
 mod capabilities;
+mod session;
 use capabilities::Capabilities;
+use session::{CreateSessionResponse, SessionEvalRequest, SessionInfo, Sessions};
 
 use anyhow::{anyhow, Result};
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -46,13 +48,13 @@ use wasmtime_wasi::pipe::MemoryOutputPipe;
 use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
-const PYTHONPATH_GUEST: &str = "/cross-build/wasm32-wasip1/build/lib.wasi-wasm32-3.14";
+pub(crate) const PYTHONPATH_GUEST: &str = "/cross-build/wasm32-wasip1/build/lib.wasi-wasm32-3.14";
 
 /// Guest path where the host's `wisp_python_lib` directory is mounted —
 /// gives sandbox Python `import wisp`. CPython on WASI's startup parser
 /// only honors ONE PYTHONPATH entry (does not split on `:`), so we add
 /// the wisp-lib path to `sys.path` via a bootstrap eval after wisp_init.
-const WISP_LIB_GUEST: &str = "/wisp_lib";
+pub(crate) const WISP_LIB_GUEST: &str = "/wisp_lib";
 
 /// Run after `wisp_init` and BEFORE we capture the snapshot, so every
 /// per-call instance starts with sys.modules already populated with
@@ -265,15 +267,15 @@ impl Drop for CowMemory {
 // Engine setup: load wasm, capture snapshot, mount COW creator
 // =====================================================================
 
-struct Runtime {
-    engine: Engine,
-    module: Module,
-    snapshot_len: usize,
-    snapshot_pages: u64,
-    snapshot_fd: RawFd,
-    host_root: String,
-    wisp_lib_root: Option<String>,
-    capabilities: Arc<Capabilities>,
+pub(crate) struct Runtime {
+    pub engine: Engine,
+    pub module: Module,
+    pub snapshot_len: usize,
+    pub snapshot_pages: u64,
+    pub snapshot_fd: RawFd,
+    pub host_root: String,
+    pub wisp_lib_root: Option<String>,
+    pub capabilities: Arc<Capabilities>,
 }
 
 fn capture_snapshot(
@@ -422,11 +424,11 @@ fn default_timeout_ms() -> u64 {
 }
 
 #[derive(Debug, Serialize)]
-struct EvalResponse {
-    rc: i32,
-    stdout: String,
-    stderr: String,
-    elapsed_us: u64,
+pub(crate) struct EvalResponse {
+    pub rc: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub elapsed_us: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -555,7 +557,7 @@ fn run_one(rt: &Runtime, code: &str) -> Result<EvalResponse> {
     })
 }
 
-fn indent_lines(s: &str, prefix: &str) -> String {
+pub(crate) fn indent_lines(s: &str, prefix: &str) -> String {
     s.lines()
         .map(|l| format!("{prefix}{l}"))
         .collect::<Vec<_>>()
@@ -568,9 +570,9 @@ fn indent_lines(s: &str, prefix: &str) -> String {
 
 #[derive(Clone)]
 struct AppState {
-    #[allow(dead_code)]
     runtime: Arc<Runtime>,
     jobs: std::sync::mpsc::Sender<Job>,
+    sessions: Arc<Sessions>,
 }
 
 async fn healthz() -> &'static str {
@@ -612,6 +614,85 @@ async fn eval_handler(
             Json(serde_json::to_value(ErrorResponse { error: format!("join error: {e}") }).unwrap()),
         ),
     }
+}
+
+// =====================================================================
+// Session HTTP handlers
+// =====================================================================
+
+async fn create_session_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    // Spawning the session thread does sync wasmtime work — keep tokio
+    // out of it via spawn_blocking.
+    let rt = state.runtime.clone();
+    let sessions = state.sessions.clone();
+    let result = tokio::task::spawn_blocking(move || sessions.create(rt)).await;
+    match result {
+        Ok(Ok(handle)) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(CreateSessionResponse {
+                session_id: handle.id.clone(),
+            }).unwrap()),
+        ),
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::to_value(ErrorResponse { error: format!("{e:#}") }).unwrap()),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::to_value(ErrorResponse { error: format!("join error: {e}") }).unwrap()),
+        ),
+    }
+}
+
+async fn session_eval_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<SessionEvalRequest>,
+) -> impl IntoResponse {
+    let Some(handle) = state.sessions.get(&session_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::to_value(ErrorResponse {
+                error: format!("session {session_id} not found"),
+            }).unwrap()),
+        );
+    };
+    let result = tokio::task::spawn_blocking(move || handle.eval(req.code)).await;
+    match result {
+        Ok(Ok(resp)) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())),
+        Ok(Err(e)) => {
+            warn!("session {session_id}: eval error: {e:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::to_value(ErrorResponse { error: format!("{e:#}") }).unwrap()),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::to_value(ErrorResponse { error: format!("join error: {e}") }).unwrap()),
+        ),
+    }
+}
+
+async fn delete_session_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    if state.sessions.delete(&session_id) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+async fn list_sessions_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let map = state.sessions.map.lock().unwrap();
+    let infos: Vec<SessionInfo> = map.values().map(|h| SessionInfo::from(h.as_ref())).collect();
+    Json(infos)
 }
 
 // =====================================================================
@@ -721,16 +802,36 @@ fn main() -> Result<()> {
             .spawn(move || worker_loop(rt_clone, rx_clone))?;
     }
 
+    // Sessions registry + idle-GC thread. Default 5 min idle timeout;
+    // override via WISP_SESSION_IDLE_SECONDS.
+    let sessions = Sessions::new();
+    let idle_secs: u64 = std::env::var("WISP_SESSION_IDLE_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300);
+    session::spawn_gc(sessions.clone(), std::time::Duration::from_secs(idle_secs));
+    info!(idle_timeout_secs = idle_secs, "session GC thread started");
+
     // Async phase — tokio runtime drives axum. HTTP handlers send jobs
     // to the worker pool over the std::mpsc channel.
     let tokio_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     tokio_rt.block_on(async move {
-        let state = AppState { runtime, jobs: tx };
+        let state = AppState {
+            runtime,
+            jobs: tx,
+            sessions,
+        };
         let app = Router::new()
             .route("/healthz", get(healthz))
             .route("/v1/eval", post(eval_handler))
+            // Session API: stateful, per-call Python interpreter state
+            // survives across evals within a session.
+            .route("/v1/session", post(create_session_handler))
+            .route("/v1/sessions", get(list_sessions_handler))
+            .route("/v1/session/:id/eval", post(session_eval_handler))
+            .route("/v1/session/:id", delete(delete_session_handler))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind(&bind).await?;
         info!("listening on http://{bind}");
