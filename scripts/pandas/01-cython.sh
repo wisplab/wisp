@@ -22,6 +22,7 @@ CYTHON="$CYTHON_VENV/bin/cython"
 # pieces it needs: language_level=3, includes for numpy/pandas-internal
 # pxd, plus the cython directives pandas uses.
 INCLUDE_DIRS=(
+  -I "$PANDAS_DIR"
   -I "$PANDAS_DIR/pandas/_libs"
   -I "$PANDAS_DIR/pandas/_libs/tslibs"
 )
@@ -32,11 +33,19 @@ NUMPY_DIR="$ROOT/vendor/numpy-1.26.4"
 INCLUDE_DIRS+=(-I "$NUMPY_DIR")
 INCLUDE_DIRS+=(-I "$NUMPY_DIR/numpy/core/include")
 
-echo "==> Patching khash.pxd to const-correct kh_get_str_starts_item"
-# parsers.pyx declares `const char *word` and calls kh_get_str_starts_item
-# with it. The .pxd declares the param as `char *` (non-const), so Cython
-# tries to round-trip word through Python to widen — illegal under nogil.
-# Make the .pxd const-correct.
+echo "==> Patching parsers.pyx + khash.pxd for nogil const-correct kh calls"
+# Root cause: khash_python.h:421 declares
+#   kh_get_str_starts_item(const kh_str_starts_t* table, const char* key)
+# but khash.pxd had non-const params and call sites in parsers.pyx use
+# `const char *word` + `const kh_str_starts_t *<hashset>`. Cython
+# refuses the mismatch under nogil. Patch BOTH sides:
+#   - khash.pxd: declare both params const (matches the C header)
+#   - parsers.pyx: explicitly remove `nogil` from the affected
+#     function body. Reason: even with .pxd const-fixed, Cython 0.29 /
+#     3.0 still rejects the call inside `with nogil:` blocks. Easier
+#     path: convert `with nogil:` to a plain block; the perf loss is
+#     small (parsers.pyx is one of many _libs files; only loses
+#     parallelism on bulk read_csv parsing, not basic import).
 KHASH_PXD="$PANDAS_DIR/pandas/_libs/khash.pxd"
 if [ -f "$KHASH_PXD" ] && ! grep -q "WISP_CONST_KEY_PATCH" "$KHASH_PXD"; then
   $CYTHON_VENV/bin/python3 - "$KHASH_PXD" <<'PY'
@@ -44,14 +53,38 @@ import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text()
 src = src.replace(
-    "kh_put_str_starts_item(kh_str_starts_t* table, char* key,",
-    "kh_put_str_starts_item(const kh_str_starts_t* table, const char* key,  # WISP_CONST_KEY_PATCH",
+    "    khuint_t kh_put_str_starts_item(kh_str_starts_t* table, char* key,",
+    "    # WISP_CONST_KEY_PATCH\n    khuint_t kh_put_str_starts_item(const kh_str_starts_t* table, const char* key,",
 )
 src = src.replace(
     "kh_get_str_starts_item(kh_str_starts_t* table, char* key)",
     "kh_get_str_starts_item(const kh_str_starts_t* table, const char* key)",
 )
 p.write_text(src)
+print(f"  patched {p.name}")
+PY
+fi
+
+PARSERS_PYX="$PANDAS_DIR/pandas/_libs/parsers.pyx"
+if [ -f "$PARSERS_PYX" ] && ! grep -q "WISP_NOGIL_DOWNGRADE" "$PARSERS_PYX"; then
+  $CYTHON_VENV/bin/python3 - "$PARSERS_PYX" <<'PY'
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+# Strip ALL `nogil` markers in parsers.pyx:
+#   1. ` nogil:` at end of cdef function signature → `:`
+#   2. `with nogil:` block → `if True:`
+# Holds the GIL throughout (perf loss, but parsers.pyx is one file;
+# basic `import pandas` works fine without nogil parallelism, only
+# bulk CSV parsing throughput is affected).
+# Order matters: replace `with nogil:` FIRST so the bare-`nogil:` strip
+# in step 2 doesn't turn `with nogil:` into `with :` (syntax error).
+new = re.sub(r"with nogil\s*:\s*$", "if True:", src, flags=re.MULTILINE)
+new = re.sub(r"\bnogil\s*:\s*$", ":", new, flags=re.MULTILINE)
+if new == src:
+    print("WARN: parsers.pyx nogil downgrade matched zero sites", file=sys.stderr)
+new = "# WISP_NOGIL_DOWNGRADE (scripts/pandas/01-cython.sh)\n" + new
+p.write_text(new)
 print(f"  patched {p.name}")
 PY
 fi
