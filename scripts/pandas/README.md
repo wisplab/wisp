@@ -1,5 +1,82 @@
 # scripts/pandas/ — WIP
 
+## Status as of 2026-05-17 0:30 AM — UPDATED
+
+**Stage 1 (cythonize) RESOLVED. Stage 2 (WASI compile) now blocked
+on CPython 3.14 vs pandas-1.5.3 internal-API mismatch.**
+
+### Stage 1 fix
+
+`scripts/pandas/01-cython.sh` now drives pandas's *own*
+`maybe_cythonize(extensions, ...)` from setup.py instead of a bare
+`cython` CLI. **All 39 .pyx files cythonize cleanly**, including
+parsers.pyx. The previous CLI failure was because cythonize() sets
+Cython.Compiler.Options state we couldn't replicate with the CLI
+(directives + pxd preprocessing). Just calling the path that works.
+
+Output: 50 .c files total (39 cythonized + 11 .c support sources)
+across `_libs/`, `_libs/tslibs/`, `_libs/window/`, `io/sas/`, plus
+the C support trees `_libs/src/{parser,ujson,...}/`.
+
+### Stage 2 (NEW blocker) — CPython 3.14 ABI
+
+`scripts/pandas/02-compile-all.sh` cross-compiles each .c with the
+WASI SDK. First run: **10 / 51 PASS, 41 FAIL.** Errors cluster:
+
+| Count | Signature |
+|---|---|
+| 169 | `too few arguments to function call, expected 6, have 5` |
+| 26  | `member reference type 'int' is not a pointer` |
+| 26  | `_PyInterpreterState_GetConfig` undeclared |
+| 23  | `_PyList_Extend` undeclared |
+| 23  | incompatible int → `PyObject *` initializer |
+| 21  | `_PyUnicode_FastCopyCharacters` undeclared |
+| 10  | `_PyDict_SetItem_KnownHash` undeclared |
+| 7   | no matching `_PyLong_AsByteArray` overload |
+| 6   | `_PyGen_SetStopIterationValue` undeclared |
+| 5   | `src/datetime/np_datetime.h` missing -I path |
+
+The fatal `np_datetime.h not found` is one missing `-I` (fixable in
+the script). The rest are all **CPython 3.14 internal-API
+removals/renames** that pandas 1.5.3's cythonized code targets.
+pandas 1.5 supports Python 3.8-3.11 officially.
+
+### Path forward (genuine multi-day work)
+
+Three forks:
+
+1. **Patch pandas 1.5.3** to use modern CPython 3.14 APIs (replace
+   each removed/renamed _Py* call). ~100+ patch sites. Manageable but
+   bug-prone; pandas patch coverage isn't trivial.
+
+2. **Upgrade to pandas 2.2.x** which targets Python 3.9-3.13. 3.14
+   still needs the same kind of patches as pandas 2.x lags 1-2
+   Python versions. AND pandas 2.x is meson-only — the cythonize()
+   trick that unblocked Stage 1 doesn't apply; full meson build with
+   wasi-sdk cross file required.
+
+3. **Use a different CPython** — build our substrate against CPython
+   3.11 instead of 3.14. Pandas 1.5 works natively against 3.11.
+   Regression for everything else (we'd lose 3.14 stdlib improvements)
+   but unblocks pandas + future Python-version-pinned libraries.
+   Substantial: redo M0/M0.5/M1 against 3.11.
+
+None of these is "evening tail" work. Each is a focused day-plus.
+
+### What stays committed
+
+  - `01-cython.sh` (works — all 39 .pyx → .c)
+  - `02-compile-all.sh` (runs; the .o output is partial)
+  - This README documenting both stages' state.
+
+Resume next session by picking one of the three forks above. My
+opinion: option (3) is the cleanest path. Down-pinning CPython
+gives us not just pandas but a wider compatibility band for the
+whole NumPy/SciPy/pandas/scikit-learn ecosystem, since they all lag
+the latest CPython by 1-2 versions.
+
+---
+
 ## Status as of 2026-05-17 early morning
 
 Two sessions in. **Still stuck on `parsers.pyx`. Root cause now
