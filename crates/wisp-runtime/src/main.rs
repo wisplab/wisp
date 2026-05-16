@@ -55,12 +55,23 @@ const PYTHONPATH_GUEST: &str = "/cross-build/wasm32-wasip1/build/lib.wasi-wasm32
 const WISP_LIB_GUEST: &str = "/wisp_lib";
 
 /// Run after `wisp_init` and BEFORE we capture the snapshot, so every
-/// per-call instance starts with `wisp` already imported (no per-call
-/// import cost) and `/wisp_lib` already on sys.path.
+/// per-call instance starts with sys.modules already populated with
+/// the modules we know will dominate per-call latency.
+///
+/// The `import numpy` here adds ~30 MB to the snapshot but drops a
+/// numpy-using call from ~520 ms to ~2 ms (per-call freshness still
+/// holds — each instance gets a fresh copy of the post-init state,
+/// just doesn't re-run the importer). Wrapped in try/except so a
+/// missing numpy (e.g. someone running an older reactor.wasm built
+/// before the M1 numpy patch) doesn't break the snapshot.
 const SNAPSHOT_BOOTSTRAP_PY: &str = "\
 import sys
 sys.path.insert(0, '/wisp_lib')
 import wisp
+try:
+    import numpy
+except ImportError:
+    pass
 ";
 
 // =====================================================================
