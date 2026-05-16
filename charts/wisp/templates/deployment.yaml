@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wisp.fullname" . }}
+  labels:
+    {{- include "wisp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "wisp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if not (empty .Values.capabilities) }}
+        checksum/capabilities: {{ .Values.capabilities | toJson | sha256sum }}
+        {{- end }}
+      labels:
+        {{- include "wisp.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: wisp-runtime
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+          env:
+            - name: WISP_BIND
+              value: "0.0.0.0:9000"
+            {{- if gt (int .Values.workers) 0 }}
+            - name: WISP_WORKERS
+              value: {{ .Values.workers | quote }}
+            {{- end }}
+            {{- if not (empty .Values.capabilities) }}
+            - name: WISP_CAPABILITIES_JSON
+              value: /etc/wisp/capabilities.json
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem is on; the daemon needs a writable
+            # /tmp for snapshot file mmap and for any per-call host-side
+            # workspace.
+            - name: tmp
+              mountPath: /tmp
+            {{- if not (empty .Values.capabilities) }}
+            - name: capabilities
+              mountPath: /etc/wisp
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if not (empty .Values.capabilities) }}
+        - name: capabilities
+          configMap:
+            name: {{ include "wisp.fullname" . }}-capabilities
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

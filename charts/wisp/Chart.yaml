@@ -1,0 +1,18 @@
+apiVersion: v2
+name: wisp
+description: Per-call WASI Python sandbox runtime for AI agents — the tool-execution backend.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - sandbox
+  - wasm
+  - python
+  - ai-agent
+  - tool-execution
+home: https://github.com/wisplab/wisp
+sources:
+  - https://github.com/wisplab/wisp
+maintainers:
+  - name: wisplab
+    url: https://github.com/wisplab

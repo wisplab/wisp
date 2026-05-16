@@ -1,0 +1,30 @@
+Wisp has been installed.
+
+1. The daemon listens on port {{ .Values.service.port }} inside the cluster
+   (Service: {{ include "wisp.fullname" . }}).
+
+2. To reach it from your laptop for a quick smoke test:
+
+   kubectl port-forward svc/{{ include "wisp.fullname" . }} 9000:{{ .Values.service.port }}
+   curl -s -X POST http://localhost:9000/v1/eval \
+     -H 'Content-Type: application/json' \
+     -d '{"code":"import numpy; print(numpy.array([1,2,3]).sum())"}'
+
+3. Pods may take 30–60 seconds to become Ready — the daemon captures
+   the WASM Python snapshot (incl. numpy pre-import) on startup.
+
+4. Capabilities currently configured:
+{{- if not (empty .Values.capabilities) }}
+   {{- range $k, $_ := .Values.capabilities }}
+   - {{ $k }}
+   {{- end }}
+{{- else }}
+   (none — sandbox can run pure Python but cannot reach the network,
+   filesystem, or shell. Set values.yaml `capabilities:` to enable.)
+{{- end }}
+
+5. From an in-cluster client:
+
+   import wisp
+   client = wisp.Client(base_url="http://{{ include "wisp.fullname" . }}:{{ .Values.service.port }}")
+   r = client.eval("print(2+2)")

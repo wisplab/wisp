@@ -1,0 +1,106 @@
+# Default values for wisp.
+# This is a YAML-formatted file.
+# Override on the command line with `--set` or by passing a values file.
+
+# Number of wisp-runtime pods. Each pod is a self-contained daemon
+# (snapshot capture + COW pool happen per-pod; no shared state today).
+replicaCount: 1
+
+image:
+  # Note: there is no official Wisp container image published yet.
+  # The expected layout: a linux/amd64 (or linux/arm64) image with
+  # `/usr/local/bin/wisp-runtime`, `/opt/wisp/python-reactor.wasm`, and
+  # `/opt/wisp/lib/` (the cross-build PYTHONPATH tree including numpy/).
+  # Build one with:
+  #   docker build -f deploy/Dockerfile -t YOUR_REPO/wisp-runtime:0.1.0 .
+  repository: ghcr.io/wisplab/wisp-runtime
+  tag: ""  # Overrides Chart.appVersion if set.
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Capabilities — JSON config the daemon reads via WISP_CAPABILITIES_JSON.
+# Empty default = sandbox can run pure Python but cannot reach out.
+# See examples/claude-code-integration/wisp-capabilities.example.json
+# for a reasonable starting point.
+capabilities: {}
+  # web_fetch:
+  #   allow_hosts: ["api.github.com", "*.openai.com"]
+  #   allow_methods: ["GET", "POST"]
+  # file_read:
+  #   allow_prefixes: ["/workspace"]
+
+# Worker thread count per pod. Defaults to available_parallelism() if 0.
+workers: 0
+
+service:
+  type: ClusterIP
+  port: 9000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: wisp.example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  # Snapshot ~27 MB live + ~12 MB per concurrent eval Instance is a
+  # reasonable starting point. Adjust by workload.
+  limits:
+    cpu: 2
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+# Liveness/readiness probe both hit /healthz. Daemon snapshot capture
+# can take 20-30s with numpy pre-imported; tune initialDelaySeconds
+# upward if pods get killed before they're ready.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 6
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra env for the wisp-runtime container.
+extraEnv: []
+  # - name: RUST_LOG
+  #   value: info
+
+podAnnotations: {}
+podLabels: {}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true

@@ -1,0 +1,11 @@
+{{- if not (empty .Values.capabilities) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wisp.fullname" . }}-capabilities
+  labels:
+    {{- include "wisp.labels" . | nindent 4 }}
+data:
+  capabilities.json: |
+    {{- toJson .Values.capabilities | nindent 4 }}
+{{- end -}}
