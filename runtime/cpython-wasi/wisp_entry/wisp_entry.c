@@ -121,6 +121,13 @@ static PyObject *PyInit__wisp(void) {
     return PyModule_Create(&_wisp_module_def);
 }
 
+/* numpy's _multiarray_umath C extension, statically linked from
+ * vendor/numpy-1.26.4/build-wasi/libnumpy.a (built via the M1 pipeline
+ * in wisp/scripts/numpy/). Forward-declared here so wisp_init can
+ * append it to the inittab. WASI Preview 1 has no dlopen so static
+ * inittab is the only way; this mirrors how _wisp itself is wired. */
+extern PyObject *PyInit__multiarray_umath(void);
+
 /* ------------------------------------------------------------------------
  * Reactor exports
  * ------------------------------------------------------------------------ */
@@ -135,6 +142,15 @@ int32_t wisp_init(void) {
      * subsequent `import _wisp` resolves it. */
     if (PyImport_AppendInittab("_wisp", PyInit__wisp) != 0) {
         return -30;
+    }
+
+    /* Same for numpy's _multiarray_umath. The symbol comes from
+     * libnumpy.a which build.sh static-links into this wasm.
+     * numpy 1.26 imports it as `numpy.core._multiarray_umath`, so
+     * register the full dotted name. */
+    if (PyImport_AppendInittab("numpy.core._multiarray_umath",
+                               PyInit__multiarray_umath) != 0) {
+        return -31;
     }
 
     /* Use the modern PyConfig embedding API. Default Py_InitializeEx skips

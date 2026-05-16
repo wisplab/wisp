@@ -36,7 +36,7 @@ mkdir -p "$OUT_DIR"
 echo "==> Expanding .c.src / .h.src templates (non-dispatch only)"
 COUNT=0
 FAILED=()
-for f in $(find "$NUMPY_DIR/numpy/core/src" -name "*.c.src" ! -name "*.dispatch.c.src") \
+for f in $(find "$NUMPY_DIR/numpy/core/src" -name "*.c.src") \
          $(find "$NUMPY_DIR/numpy/core/src" -name "*.h.src") \
          $(find "$NUMPY_DIR/numpy/core/src" -name "*.inc.src") \
          $(find "$NUMPY_DIR/numpy/core/include" -name "*.h.src" 2>/dev/null); do

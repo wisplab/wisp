@@ -173,6 +173,31 @@ UMATH_CPP=(
   src/umath/string_ufuncs.cpp
 )
 
+# Dispatch files. In numpy's normal build these get compiled multiple
+# times with different SIMD baselines (NPYV pass). For wasm there's no
+# SIMD — we compile each as a single TU with NPY_DISABLE_OPTIMIZATION=1,
+# which selects the scalar baseline via `#if NPY_SIMD` guards inside
+# the source. _simd.dispatch.c is part of the _simd test module
+# (separate extension), not _multiarray_umath, so skip it.
+DISPATCH_SRC=(
+  src/multiarray/argfunc.dispatch.c
+  src/umath/loops_unary.dispatch.c
+  src/umath/loops_unary_fp.dispatch.c
+  src/umath/loops_unary_fp_le.dispatch.c
+  src/umath/loops_unary_complex.dispatch.c
+  src/umath/loops_arithm_fp.dispatch.c
+  src/umath/loops_arithmetic.dispatch.c
+  src/umath/loops_logical.dispatch.c
+  src/umath/loops_minmax.dispatch.c
+  src/umath/loops_trigonometric.dispatch.c
+  src/umath/loops_umath_fp.dispatch.c
+  src/umath/loops_exponent_log.dispatch.c
+  src/umath/loops_hyperbolic.dispatch.c
+  src/umath/loops_modulo.dispatch.c
+  src/umath/loops_comparison.dispatch.c
+  src/umath/loops_autovec.dispatch.c
+)
+
 NPYMATH_SRC=(
   src/npymath/npy_math.c
   src/npymath/ieee754.c                # .c.src expanded
@@ -270,6 +295,9 @@ for f in "${UMATH_SRC[@]}"; do compile_c "$f"; done
 
 echo "==> Compiling umath .cpp (${#UMATH_CPP[@]} files)"
 for f in "${UMATH_CPP[@]}"; do compile_cpp "$f"; done
+
+echo "==> Compiling dispatch .c (${#DISPATCH_SRC[@]} files, scalar baseline)"
+for f in "${DISPATCH_SRC[@]}"; do compile_c "$f"; done
 
 echo "==> Compiling npymath .c (${#NPYMATH_SRC[@]} files)"
 for f in "${NPYMATH_SRC[@]}"; do compile_c "$f"; done
