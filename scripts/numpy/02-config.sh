@@ -239,6 +239,56 @@ else
   echo "  (already patched)"
 fi
 
+echo "==> Patching loops.c to no-op long-double ufunc bodies"
+# Background: PyUFunc_g_g / _gg_g / _G_G / _GG_G dispatch a `void *func`
+# pointer cast through a `npy_longdouble (*)(npy_longdouble)`-style
+# typedef. wasm32 enforces signature equality at indirect call sites
+# and rejects the cast (same family as the xxhash METH_NOARGS trap).
+#
+# On wasm32 `npy_longdouble == double` (8-byte IEEE 754), so the long-
+# double variants don't actually add precision; dropping them via
+# no-op bodies costs nothing for our scalar baseline. User code that
+# explicitly uses `dtype=np.longdouble` ufuncs gets zero-output, but
+# that's an acceptable degradation for now and matches what we already
+# do for non-built C extensions (linalg / fft / random stubs).
+#
+# Python script does the rewrite because sed across multi-line C bodies
+# is too brittle on macOS.
+LOOPS_C="$NUMPY_DIR/numpy/core/src/umath/loops.c"
+if [ -f "$LOOPS_C" ] && ! grep -q "WISP_WASI_LONGDOUBLE_NOOP" "$LOOPS_C"; then
+  python3 - "$LOOPS_C" <<'PY'
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+funcs = ["PyUFunc_g_g", "PyUFunc_gg_g", "PyUFunc_G_G", "PyUFunc_GG_G"]
+noop_body = (
+    "\n{\n"
+    "    /* WISP_WASI_LONGDOUBLE_NOOP — see scripts/numpy/02-config.sh. */\n"
+    "    (void)args; (void)dimensions; (void)steps; (void)func;\n"
+    "}\n"
+)
+total = 0
+for fn in funcs:
+    # Match `<fn>(char **args, ...)\n{ ... }\n` — balanced braces, single
+    # body. The bodies in loops.c are simple enough that a regex pinned
+    # to the leading signature + balanced braces works.
+    pattern = re.compile(
+        r"(" + re.escape(fn) + r"\(char \*\*args, npy_intp const \*dimensions, npy_intp const \*steps, void \*func\))\s*\{[^{}]*\{[^{}]*\}[^{}]*\}",
+        re.DOTALL,
+    )
+    m = pattern.search(src)
+    if not m:
+        print(f"  WARN: pattern miss for {fn}", file=sys.stderr)
+        continue
+    src = src[:m.start()] + m.group(1) + noop_body + src[m.end():]
+    total += 1
+p.write_text(src)
+print(f"  patched {total} long-double ufunc bodies in {p}")
+PY
+else
+  echo "  (already patched or loops.c missing)"
+fi
+
 echo "==> Writing src/common/npy_config.h additions (WASI-specific)"
 # numpy's existing npy_config.h is mostly portable; we just inject a
 # block that turns off optimization paths needing CPU dispatch.

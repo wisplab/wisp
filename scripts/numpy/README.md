@@ -5,47 +5,69 @@ files, one TU); numpy is the headline: ~100 C/C++ files across
 multiarray + umath + npymath, plus a code-generation step, plus
 hand-written platform config.
 
-## Status as of 2026-05-16 end of Day 1
+## Status — `import numpy` works (2026-05-16 late Day 1)
 
 | Stage | What | Status |
 |---|---|---|
 | 1 | template expand + codegen | ✅ |
-| 2 | hand-write `_numpyconfig.h` + `config.h` + npy_cpu.h patch | ✅ |
+| 2 | hand-write `_numpyconfig.h` + `config.h` + npy_cpu.h patch + long-double ufunc no-op | ✅ |
 | 3a | compile one .c (alloc.c) sanity check | ✅ |
 | 4 | compile all 116 .c/.cpp incl 16 dispatch files | ✅ **116/116** |
-| 5 | archive into `libnumpy.a` (4.1 MB) | ✅ |
-| 6 | link into `python-reactor.wasm` (38.2 MB total) | ✅ |
+| 5 | archive into `libnumpy.a` (4.4 MB after patch) | ✅ |
+| 6 | link into `python-reactor.wasm` (38.6 MB total) | ✅ |
 | 7 | stage pure-Python `numpy/` + 11 stub C ext modules | ✅ |
-| 8 | `import numpy` end-to-end | ⚠️ traps in long-double ufunc registration |
+| 8 | **`import numpy` end-to-end + real ops smoke** | ✅ |
 
-**Where we got to:** `import numpy` traverses the entire core import
-chain (numpy → numpy.core → numpy.lib → numpy.matrixlib → numpy.linalg
-→ numpy.random) without ModuleNotFoundError. Falls over during ufunc
-registration with:
+What runs inside the sandbox today:
 
+```python
+import numpy as np
+np.array([1,2,3,4,5]).sum()      # → 15
+np.arange(6).reshape(2,3) @ np.arange(6).reshape(3,2)
+                                  # → [[10 13] [28 40]]
+np.sin(np.array([1.0, 2.0, 3.0]))
+                                  # → [0.84147098 0.90929743 0.14112001]
+np.exp(np.array([1.0, 2.0, 3.0]))
+                                  # → [ 2.71828183  7.3890561  20.08553692]
+a = np.arange(20).reshape(4,5); a[a > 10]
+                                  # → [11 12 13 14 15 16 17 18 19]
+np.linalg.inv(np.eye(3))          # → NotImplementedError (BLAS stub)
 ```
-wasm trap: indirect call type mismatch
-  at PyUFunc_g_g
-  at PyUFunc_GenericFunctionInternal
-  at ufunc_generic_fastcall
-  …
-```
 
-**Diagnosis:** `numpy/core/src/umath/loops.c:141` `PyUFunc_g_g` casts
-a `void *func` to `npy_longdouble (*)(npy_longdouble)` and calls it.
-The wasm runtime's strict indirect-call type check rejects the call
-because some ufunc function pointer in the dispatch table has a
-different signature than the cast declares. Same family of trap as
-the xxhash METH_NOARGS issue from M1 v0 (native ABIs silently tolerate
-signature mismatches at indirect calls; wasm32 doesn't).
+Per-call latency is ~520 ms because each fresh sandbox re-imports
+numpy. Stage 9 (deferred): pre-import numpy into the snapshot via
+`wisp_init` bootstrap (same trick we use for `wisp` itself) — should
+bring warm latency back to the ~2 ms baseline.
 
-**Likely fixes (Day 2):**
-1. Identify which ufunc registration triggers the trap (binary-search
-   by patching loops.c to remove `g` variants for each ufunc).
-2. Either patch loops.c to drop long-double ufuncs entirely (we
-   already have `npy_longdouble == double` on wasm32, so dropping `g`
-   doesn't lose functionality), or fix the signature mismatch at the
-   registration site.
+### The long-double ufunc fix
+
+Day-2 blocker from morning: `import numpy` was trapping with `wasm
+trap: indirect call type mismatch` inside `PyUFunc_g_g`. Diagnosis
+was right: loops.c:141 cast a `void *func` through
+`npy_longdouble (*)(npy_longdouble)` and called it; wasm32's strict
+typecheck rejected the call.
+
+Fix (in `02-config.sh` after Stage 1): a Python rewrite that swaps
+the bodies of the 4 long-double ufunc functions
+(`PyUFunc_g_g / _gg_g / _G_G / _GG_G`) with no-op stubs. On wasm32
+`npy_longdouble == double` so the long-double ufuncs add no precision
+anyway. User code that does `dtype=np.longdouble` on a ufunc gets
+zero output; that matches our stance for the unbuilt C extensions
+(linalg/fft/random raise `NotImplementedError`).
+
+### What's still NOT in scope
+
+`numpy.linalg`, `numpy.fft`, `numpy.random` are all stubbed to
+`NotImplementedError`. Building these requires:
+  - linalg: a wasm BLAS/LAPACK (reference netlib LAPACK in C can be
+    cross-compiled; an OpenBLAS port is much harder).
+  - fft: numpy ships pocketfft in `numpy/fft/src/`; a small C
+    extension, should build the same way as `_multiarray_umath`.
+  - random: each PRNG (`_mt19937`, `_pcg64`, etc.) is its own C
+    extension; same pattern, just more of them.
+
+These are tractable follow-up work. They're not required for the
+"numpy import works" headline, which is what today was after.
 
 The stub C extension modules added in this session (so import can
 progress past their lookups):
