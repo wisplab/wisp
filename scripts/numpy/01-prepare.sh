@@ -38,6 +38,7 @@ COUNT=0
 FAILED=()
 for f in $(find "$NUMPY_DIR/numpy/core/src" -name "*.c.src" ! -name "*.dispatch.c.src") \
          $(find "$NUMPY_DIR/numpy/core/src" -name "*.h.src") \
+         $(find "$NUMPY_DIR/numpy/core/src" -name "*.inc.src") \
          $(find "$NUMPY_DIR/numpy/core/include" -name "*.h.src" 2>/dev/null); do
   if python3 "$NUMPY_DIR/numpy/distutils/conv_template.py" "$f" >/dev/null 2>&1; then
     COUNT=$((COUNT+1))

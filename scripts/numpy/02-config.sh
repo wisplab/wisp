@@ -198,6 +198,17 @@ cat > "$GEN_DIR/config.h" <<'EOF'
 #define HAVE_ATTRIBUTE_OPTIMIZE_OPT_3 1
 #define HAVE_ATTRIBUTE_OPTIMIZE_OPT_2 1
 
+/* long double representation on wasm32: identical to little-endian IEEE 754
+ * 64-bit double (wasm-ld collapses long double → double). This selects the
+ * IEEE-double branch in numpy/core/src/npymath/npy_math_private.h and
+ * resolves the ~40 "No long double representation defined" errors. */
+#define HAVE_LDOUBLE_IEEE_DOUBLE_LE 1
+
+/* numpy's relaxed-stride debugging flag is normally set by setup.py
+ * from $NPY_RELAXED_STRIDES_DEBUG env (default 0). Hard-set to 0
+ * because some .c files use it as a value, not just an ifdef. */
+#define NPY_RELAXED_STRIDES_DEBUG 0
+
 /* SIMD intrinsics — NONE on wasm32 (we disable optimization paths) */
 /* #undef HAVE_ATTRIBUTE_TARGET_AVX */
 /* #undef HAVE_ATTRIBUTE_TARGET_AVX2 */

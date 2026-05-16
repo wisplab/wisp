@@ -10,23 +10,38 @@ hand-written platform config.
 | Stage | Script | State |
 |---|---|---|
 | Vendor numpy source | `01-prepare.sh` first run | ✅ `vendor/numpy-1.26.4/` |
-| Template expansion (.c.src/.h.src) | `01-prepare.sh` | ✅ 21 plain templates done; 17 `*.dispatch.c.src` deferred |
+| Template expansion (.c.src/.h.src/.inc.src) | `01-prepare.sh` | ✅ 22 plain templates done; 17 `*.dispatch.c.src` deferred |
 | Code generators (API / umath) | `01-prepare.sh` | ✅ 6 files generated (`__multiarray_api.{c,h}`, `__ufunc_api.{c,h}`, `__umath_generated.c`, `_umath_doc_generated.h`) |
-| `_numpyconfig.h` + `config.h` hand-write | `02-config.sh` | ✅ |
+| `_numpyconfig.h` + `config.h` hand-write | `02-config.sh` | ✅ includes `HAVE_LDOUBLE_IEEE_DOUBLE_LE`, `NPY_RELAXED_STRIDES_DEBUG=0` |
 | `npy_cpu.h` patched for `__wasi__` | `02-config.sh` | ✅ |
-| Compile one .c (alloc.c) with WASI SDK | `03-compile-one.sh` | ✅ 43 KB wasm32 .o, expected symbols (`PyDataMem_NEW`, etc.) |
-| Compile all multiarray + umath .c | `04-compile-all.sh` | ⬜ TODO |
-| Static-link the .o's into reactor.wasm | Setup.local entry | ⬜ TODO |
-| Copy pure-Python numpy/ to PYTHONPATH | `05-stage-python.sh` | ⬜ TODO |
+| Compile one .c (alloc.c) with WASI SDK | `03-compile-one.sh` | ✅ 43 KB wasm32 .o |
+| Compile all multiarray + umath + common + npymath (.c + .cpp) | `04-compile-all.sh` | ✅ **100/100 .o, 4.3 MB total. `PyInit__multiarray_umath` exported.** |
+| Archive .o's into `libnumpy.a` | `05-archive.sh` | ⬜ TODO |
+| Static-link `libnumpy.a` into reactor.wasm | wisp_entry/build.sh add or Setup.local | ⬜ TODO |
+| Copy pure-Python `numpy/` to PYTHONPATH | `06-stage-python.sh` | ⬜ TODO |
 | `import numpy` works in sandbox | end-to-end | ⬜ TODO |
 | SIMD dispatch path (the 17 `.dispatch.c.src`) | — | ⬜ deferred, scalar-only baseline first |
-| `numpy.linalg` (BLAS dep) | — | ⬜ deferred, reference BLAS fallback when needed |
+| `numpy.linalg` (BLAS dep) | — | ⬜ deferred |
 | `numpy.fft`, `numpy.random` | — | ⬜ deferred |
 
-Realistic timeline for end-to-end `import numpy`: 5–10 more evenings.
-The hard part isn't any single file; it's the long tail of
-per-file gotchas (one symbol, one missing header, one ABI mismatch)
-that you only find by trying to compile each one.
+What got us from "50 fails" to "100/100" in one session — three fixes:
+
+1. **`HAVE_LDOUBLE_IEEE_DOUBLE_LE`** in `config.h` — wasm32 long double
+   is identical to little-endian IEEE 754 double; saying so unblocked
+   ~46 files (all `LDBL_EXP_MASK / IEEEl2bitsrep` errors).
+2. **`NPY_RELAXED_STRIDES_DEBUG=0`** in `config.h` — used as a value
+   (`if (… || NPY_RELAXED_STRIDES_DEBUG)`), not just an ifdef, so it
+   has to be defined to a literal.
+3. **Skip compiling `__multiarray_api.c` / `__ufunc_api.c` /
+   `__umath_generated.c` as standalone TUs** — `multiarraymodule.c`
+   and `umathmodule.c` `#include` them. They share the host's symbol
+   scope. The `-I"$GEN"` already on the path makes the includes
+   resolve.
+
+Realistic timeline for `import numpy` end-to-end: 3–5 more evenings.
+Hardest remaining steps are probably (a) linking the .o's into the
+reactor without symbol collisions and (b) staging numpy's pure-Python
+tree so the C extension can actually be imported as `numpy._core.…`.
 
 ## Pipeline stages
 
