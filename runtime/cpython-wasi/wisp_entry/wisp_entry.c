@@ -128,6 +128,28 @@ static PyObject *PyInit__wisp(void) {
  * inittab is the only way; this mirrors how _wisp itself is wired. */
 extern PyObject *PyInit__multiarray_umath(void);
 
+/* numpy.fft._pocketfft_internal — single-file C extension compiled in
+ * the same libnumpy.a archive. Registered alongside _multiarray_umath. */
+extern PyObject *PyInit__pocketfft_internal(void);
+
+/* numpy.linalg._umath_linalg — C++ wrapper + 9 f2c-translated reference
+ * BLAS+LAPACK .c files (numpy ships these as the no-system-BLAS
+ * fallback, exactly our case on wasm). */
+extern PyObject *PyInit__umath_linalg(void);
+
+/* numpy.random — 9 cythonized C extensions covering bit generators
+ * (mt19937, philox, pcg64, sfc64), the modern Generator API,
+ * legacy mtrand, and supporting modules. */
+extern PyObject *PyInit__common(void);
+extern PyObject *PyInit_bit_generator(void);
+extern PyObject *PyInit__bounded_integers(void);
+extern PyObject *PyInit__generator(void);
+extern PyObject *PyInit__mt19937(void);
+extern PyObject *PyInit__pcg64(void);
+extern PyObject *PyInit__philox(void);
+extern PyObject *PyInit__sfc64(void);
+extern PyObject *PyInit_mtrand(void);
+
 /* ------------------------------------------------------------------------
  * Reactor exports
  * ------------------------------------------------------------------------ */
@@ -151,6 +173,33 @@ int32_t wisp_init(void) {
     if (PyImport_AppendInittab("numpy.core._multiarray_umath",
                                PyInit__multiarray_umath) != 0) {
         return -31;
+    }
+    if (PyImport_AppendInittab("numpy.fft._pocketfft_internal",
+                               PyInit__pocketfft_internal) != 0) {
+        return -32;
+    }
+    if (PyImport_AppendInittab("numpy.linalg._umath_linalg",
+                               PyInit__umath_linalg) != 0) {
+        return -33;
+    }
+
+    /* numpy.random — register all 9 C extensions under their full
+     * dotted names. Order doesn't matter for inittab. */
+    struct { const char *name; PyObject *(*init)(void); } random_mods[] = {
+        {"numpy.random._common",            PyInit__common},
+        {"numpy.random.bit_generator",      PyInit_bit_generator},
+        {"numpy.random._bounded_integers",  PyInit__bounded_integers},
+        {"numpy.random._generator",         PyInit__generator},
+        {"numpy.random._mt19937",           PyInit__mt19937},
+        {"numpy.random._pcg64",             PyInit__pcg64},
+        {"numpy.random._philox",            PyInit__philox},
+        {"numpy.random._sfc64",             PyInit__sfc64},
+        {"numpy.random.mtrand",             PyInit_mtrand},
+    };
+    for (size_t i = 0; i < sizeof(random_mods)/sizeof(random_mods[0]); i++) {
+        if (PyImport_AppendInittab(random_mods[i].name, random_mods[i].init) != 0) {
+            return -40 - (int)i;
+        }
     }
 
     /* Use the modern PyConfig embedding API. Default Py_InitializeEx skips

@@ -60,59 +60,22 @@ def format_float_OSprintf_g(*args, **kwargs):
     raise NotImplementedError("not built into wisp WASI runtime")
 EOF
 
-# Stub numpy.linalg._umath_linalg — normally a separate C extension
-# built against BLAS/LAPACK. We don't have a wasm BLAS yet (deferred);
-# the stub lets `import numpy` succeed by satisfying the import-time
-# lookup. Any actual linalg call (solve, inv, eig, …) raises a clear
-# NotImplementedError instead of returning bogus data.
-cat > "$DEST/linalg/_umath_linalg.py" <<'EOF'
-"""Stub for numpy.linalg._umath_linalg.
+# numpy.linalg._umath_linalg is now a real C extension built against
+# numpy's bundled f2c-translated reference BLAS+LAPACK (lapack_lite).
+# Remove any leftover stub from a prior run.
+rm -f "$DEST/linalg/_umath_linalg.py"
 
-The real module is a C extension that calls into BLAS/LAPACK. We have
-no BLAS yet in the WASI runtime (deferred), so any actual call raises
-NotImplementedError. `import numpy` succeeds because module lookup
-finds this file; failure happens only on first numerical use.
-"""
-__all__ = []
+# numpy.fft._pocketfft_internal is now a real C extension — compiled in
+# libnumpy.a and registered in wisp_entry.c inittab. No stub needed.
+# Remove any leftover stub from a prior run so it doesn't shadow the
+# real init.
+rm -f "$DEST/fft/_pocketfft_internal.py"
 
-class _Missing:
-    def __init__(self, name): self._name = name
-    def __call__(self, *a, **k):
-        raise NotImplementedError(
-            f"numpy.linalg.{self._name} requires BLAS/LAPACK, "
-            "which is not built into the wisp WASI runtime yet.")
-
-def __getattr__(name):
-    return _Missing(name)
-EOF
-
-# Stub numpy.fft._pocketfft_internal — separate C extension for FFT.
-cat > "$DEST/fft/_pocketfft_internal.py" <<'EOF'
-"""Stub for numpy.fft._pocketfft_internal (pocketfft C extension)."""
-__all__ = []
-
-def __getattr__(name):
-    def _missing(*a, **k):
-        raise NotImplementedError(
-            f"numpy.fft.{name} not built into wisp WASI runtime yet.")
-    return _missing
-EOF
-
-# Stub numpy.random submodules — each PRNG (_mt19937, _pcg64, _philox,
-# _sfc64, _common, bit_generator) is a separate C extension.
+# numpy.random submodules are now real Cythonized C extensions. Remove
+# any leftover Python stubs from a prior run so they don't shadow the
+# real inittab entries.
 for mod in _common _bounded_integers bit_generator _mt19937 _pcg64 _philox _sfc64 mtrand _generator; do
-  cat > "$DEST/random/$mod.py" <<EOF
-"""Stub for numpy.random.$mod (C extension)."""
-# Empty __all__ so \`from .$mod import *\` succeeds with no symbols
-# rather than tripping over __getattr__ returning a function.
-__all__ = []
-
-def __getattr__(name):
-    def _missing(*a, **k):
-        raise NotImplementedError(
-            f"numpy.random.$mod.{name} not built into wisp WASI runtime yet.")
-    return _missing
-EOF
+  rm -f "$DEST/random/$mod.py"
 done
 
 cat > "$DEST/__config__.py" <<'EOF'
