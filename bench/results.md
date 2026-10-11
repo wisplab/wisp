@@ -148,6 +148,38 @@ depending on system load.
     the 50-sample window catching one or two p99 spikes. With
     N=200+ the mean settles closer to p50.
 
+## Compute penalty (compute-bound workloads)
+
+The per-call numbers above are cold-start / dispatch latency. For
+compute-bound fan-out (the quant-backtest use case) the question is the
+per-core efficiency of the wasm math vs native. Measured in-process
+(startup excluded) as `k = wasm/native`:
+
+| kernel | baseline `-O2` | + SIMD | + wisp-accel |
+|---|---:|---:|---:|
+| vectorized numpy (elementwise / rolling / backtest) | 0.6–1.0× | 0.8–1.1× | **0.7–1.0×** |
+| BLAS matmul (400×400) | 151× | 151× | **1.0×** |
+| LAPACK solve (300×300) | 10.8× | 6.3× | **6.2×** |
+| pure-Python loop (100k iters) | 7.8× | 8.0× | **7.9×** |
+
+These are historical measurements. The 2026-10-11 reproduction found
+vectorized kernels at about 1.1–1.6× native, matrix multiply at 0.45 ms
+with host BLAS offload versus 48.94 ms without, and residual penalties
+for LU factorization and pure-Python loops. Host CPython/NumPy versions
+have changed; see current measurements and raw data in
+[`compute-penalty/README.md`](./compute-penalty/README.md).
+
+## Session branch (fork-per-parameter fan-out)
+
+`POST /v1/session/:id/branch` forks the session's current state into one
+COW child per code string, runs them in parallel, and gathers the
+results. On the 2026-10-11 post-fix 40-combo × 2M-bar run it took 796 ms,
+versus 1041 ms for a native pool recomputing data per task and 279 ms
+for a native fork pool sharing precomputed arrays. All 40 results
+matched within `1e-6`; the demo does not prove bit-identical results
+or a general performance advantage over native COW execution. See
+[`branch-sweep/README.md`](./branch-sweep/README.md).
+
 [cow]: ./python-wasi-cow/FINDINGS.md
 [numpy-readme]: ../scripts/numpy/README.md
 [blog]: https://github.com/wisplab/wisplab-landing/tree/main/blog/sub-ms-python-sandbox

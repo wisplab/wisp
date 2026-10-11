@@ -24,12 +24,18 @@ fi
 CC="$WASI_SDK/bin/clang"
 SYSROOT="$WASI_SDK/share/wasi-sysroot"
 
-echo "==> Compiling wisp_entry.c + libpython3.14.a → python-reactor.wasm"
+echo "==> Compiling wisp_entry.c + wisp_accel.c + libpython3.14.a → python-reactor.wasm"
+# --wrap=dgemm_/sgemm_: lapack_lite's internal f2c gemm calls land on
+# wisp_accel.c's host-offload wrappers (falling back to __real_* when
+# the host declines). -msimd128 -mrelaxed-simd so wisp_accel's local
+# fallback loops autovectorize.
 "$CC" \
   --target=wasm32-wasip1 \
   --sysroot="$SYSROOT" \
   -mexec-model=reactor \
-  -O2 \
+  -O3 \
+  -msimd128 \
+  -mrelaxed-simd \
   -fPIC \
   -DPy_BUILD_CORE \
   -I"$CPYTHON_DIR/Include" \
@@ -39,8 +45,11 @@ echo "==> Compiling wisp_entry.c + libpython3.14.a → python-reactor.wasm"
   -Wl,--export=wisp_eval \
   -Wl,--export=wisp_alloc \
   -Wl,--export=wisp_free \
+  -Wl,--wrap=dgemm_ \
+  -Wl,--wrap=sgemm_ \
   -Wl,-z,stack-size=4194304 \
   wisp_entry.c \
+  ../wisp_accel/wisp_accel.c \
   "$LIBPYTHON" \
   "$WASI_BUILD_DIR/Modules/_decimal/libmpdec/libmpdec.a" \
   "$WASI_BUILD_DIR/Modules/expat/libexpat.a" \

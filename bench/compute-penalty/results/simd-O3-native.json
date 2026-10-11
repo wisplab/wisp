@@ -1,0 +1,1 @@
+{"meta": {"python": "3.11.5", "numpy": "2.4.5", "platform": "darwin"}, "seconds": {"membw_elementwise": 0.009415708016604185, "vec_math": 0.01518662495072931, "backtest_vectorized": 0.013724875054322183, "blas_matmul_400": 0.0003437920240685344, "blas_solve_300": 0.0003486661007627845, "python_loop_100k": 0.0029833329608663917}}

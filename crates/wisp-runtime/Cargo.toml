@@ -8,6 +8,9 @@ description = "Wisp host runtime daemon: HTTP gateway in front of an in-process 
 [dependencies]
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+matrixmultiply = "0.3"
+bytes = "1"
+tempfile = "3"
 anyhow.workspace = true
 libc.workspace = true
 serde.workspace = true

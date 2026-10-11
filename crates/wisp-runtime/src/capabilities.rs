@@ -142,6 +142,72 @@ impl Capabilities {
     }
 }
 
+// ---- host_call bridge ------------------------------------------------------
+
+/// Hard caps on guest-supplied lengths, enforced BEFORE any host-side
+/// allocation. Without these a hostile guest can pass a huge or
+/// negative length and make the host allocate from an unvalidated
+/// i32 (docs/security.md finding #5).
+pub const MAX_NAME_LEN: usize = 4096;
+pub const MAX_PAYLOAD_LEN: usize = 16 << 20;
+
+/// The env::host_call implementation shared by the stateless eval path
+/// (main.rs) and the session path (session.rs).
+pub(crate) fn host_call_bridge(
+    caps: &Capabilities,
+    caller: &mut wasmtime::Caller<'_, wasmtime_wasi::preview1::WasiP1Ctx>,
+    name_ptr: i32,
+    name_len: i32,
+    payload_ptr: i32,
+    payload_len: i32,
+    result_ptr: i32,
+    result_max: i32,
+) -> i32 {
+    let mem = match caller.get_export("memory") {
+        Some(wasmtime::Extern::Memory(m)) => m,
+        _ => return -100,
+    };
+    // Validate lengths before allocating: i32 → usize must not
+    // sign-extend a negative into a giant allocation.
+    let (Ok(name_len), Ok(payload_len)) = (usize::try_from(name_len), usize::try_from(payload_len))
+    else {
+        return -104;
+    };
+    if name_len > MAX_NAME_LEN || payload_len > MAX_PAYLOAD_LEN || result_max < 0 {
+        return -104;
+    }
+    let mut name_buf = vec![0u8; name_len];
+    if mem
+        .read(&*caller, name_ptr as usize, &mut name_buf)
+        .is_err()
+    {
+        return -101;
+    }
+    let mut payload_buf = vec![0u8; payload_len];
+    if mem
+        .read(&*caller, payload_ptr as usize, &mut payload_buf)
+        .is_err()
+    {
+        return -101;
+    }
+    let name = std::str::from_utf8(&name_buf).unwrap_or("");
+    match caps.dispatch(name, &payload_buf) {
+        Ok(response) => {
+            if response.len() > result_max as usize {
+                return RC_RESPONSE_TOO_LARGE;
+            }
+            if mem
+                .write(&mut *caller, result_ptr as usize, &response)
+                .is_err()
+            {
+                return -103;
+            }
+            response.len() as i32
+        }
+        Err(rc) => rc,
+    }
+}
+
 // ---- shell ---------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -188,7 +254,9 @@ fn dispatch_shell(cfg: &ShellConfig, payload: &[u8]) -> Result<Vec<u8>, i32> {
     if let Some(stdin) = &req.stdin {
         use std::io::Write;
         use std::process::Stdio;
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| {
             warn!("shell spawn failed: {e}");
             RC_INTERNAL
@@ -373,11 +441,7 @@ fn dispatch_web_fetch(cfg: &WebFetchConfig, payload: &[u8]) -> Result<Vec<u8>, i
         return Err(RC_NOT_ALLOWED);
     }
 
-    let method = req
-        .method
-        .as_deref()
-        .unwrap_or("GET")
-        .to_ascii_uppercase();
+    let method = req.method.as_deref().unwrap_or("GET").to_ascii_uppercase();
     let allow_methods: HashSet<String> = cfg
         .allow_methods
         .iter()
@@ -508,10 +572,7 @@ mod tests {
 
     #[test]
     fn host_allowed_exact_and_wildcard() {
-        let allow = vec![
-            "api.openai.com".to_string(),
-            "*.example.com".to_string(),
-        ];
+        let allow = vec!["api.openai.com".to_string(), "*.example.com".to_string()];
         assert!(host_allowed("api.openai.com", &allow));
         assert!(host_allowed("API.OpenAI.com", &allow));
         assert!(host_allowed("api.example.com", &allow));

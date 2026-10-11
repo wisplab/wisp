@@ -1,0 +1,1 @@
+{"meta": {"python": "3.14.3", "numpy": "1.26.4", "platform": "wasi"}, "seconds": {"membw_elementwise": 0.007096415999999994, "vec_math": 0.01609733299999999, "backtest_vectorized": 0.011328208999999978, "blas_matmul_400": 0.05176470900000002, "blas_solve_300": 0.0022030829999999946, "python_loop_100k": 0.023943583999999962}}

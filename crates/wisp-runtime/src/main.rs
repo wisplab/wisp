@@ -23,10 +23,12 @@
 //! Day-1 goal is "anyone can `cargo run` and curl localhost:9000 to run
 //! Python in a fresh WASM sandbox sub-millisecond."
 
+mod accel;
 mod capabilities;
+mod output;
 mod session;
 use capabilities::Capabilities;
-use session::{CreateSessionResponse, SessionEvalRequest, SessionInfo, Sessions};
+use session::{BranchRequest, CreateSessionResponse, SessionEvalRequest, SessionInfo, Sessions};
 
 use anyhow::{anyhow, Result};
 use axum::{
@@ -44,7 +46,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{info, warn};
 use wasmtime::*;
-use wasmtime_wasi::pipe::MemoryOutputPipe;
 use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
@@ -276,6 +277,9 @@ pub(crate) struct Runtime {
     pub host_root: String,
     pub wisp_lib_root: Option<String>,
     pub capabilities: Arc<Capabilities>,
+    /// Native BLAS host offload (wisp-accel). Off = guest computes in
+    /// pure wasm (slower, bit-deterministic).
+    pub accel: bool,
 }
 
 fn capture_snapshot(
@@ -285,6 +289,11 @@ fn capture_snapshot(
 ) -> Result<(Vec<u8>, u64)> {
     let mut config = Config::new();
     config.async_support(false);
+    // The reactor is compiled with -msimd128 -mrelaxed-simd; make both
+    // explicit so a wasmtime default change can't silently reject it.
+    config.wasm_simd(true);
+    config.wasm_relaxed_simd(true);
+    config.cranelift_opt_level(OptLevel::Speed);
     let engine = Engine::new(&config)?;
     let module = Module::from_file(&engine, python_wasm)?;
 
@@ -302,6 +311,7 @@ fn capture_snapshot(
          _rm: i32|
          -> i32 { -1 },
     )?;
+    accel::add_to_linker(&mut linker, accel::enabled_from_env())?;
 
     let mut b = WasiCtxBuilder::new();
     b.inherit_stdio()
@@ -336,8 +346,7 @@ fn capture_snapshot(
             .ok_or_else(|| anyhow!("no memory export during bootstrap"))?;
         let src = SNAPSHOT_BOOTSTRAP_PY.as_bytes();
         let ptr = alloc.call(&mut store, src.len() as i32)?;
-        mem.data_mut(&mut store)[ptr as usize..ptr as usize + src.len()]
-            .copy_from_slice(src);
+        mem.data_mut(&mut store)[ptr as usize..ptr as usize + src.len()].copy_from_slice(src);
         let brc = eval.call(&mut store, (ptr, src.len() as i32))?;
         if brc != 0 {
             return Err(anyhow!(
@@ -375,7 +384,9 @@ fn build_runtime(
     let snapshot_len = snapshot.len();
     std::fs::write(&snapshot_path, &snapshot)?;
     drop(snapshot);
-    let snap_file = std::fs::OpenOptions::new().read(true).open(&snapshot_path)?;
+    let snap_file = std::fs::OpenOptions::new()
+        .read(true)
+        .open(&snapshot_path)?;
     let snapshot_fd = snap_file.into_raw_fd();
 
     let creator = Arc::new(CowMemoryCreator {
@@ -384,6 +395,9 @@ fn build_runtime(
     });
     let mut config = Config::new();
     config.async_support(false);
+    config.wasm_simd(true);
+    config.wasm_relaxed_simd(true);
+    config.cranelift_opt_level(OptLevel::Speed);
     config.with_host_memory(creator);
     config.memory_init_cow(false);
 
@@ -395,6 +409,9 @@ fn build_runtime(
         t.elapsed().as_secs_f64() * 1000.0
     );
 
+    let accel = accel::enabled_from_env();
+    info!(accel, "wisp-accel (native BLAS offload)");
+
     Ok(Runtime {
         engine,
         module,
@@ -404,6 +421,7 @@ fn build_runtime(
         host_root,
         wisp_lib_root,
         capabilities,
+        accel,
     })
 }
 
@@ -439,8 +457,8 @@ struct ErrorResponse {
 fn run_one(rt: &Runtime, code: &str) -> Result<EvalResponse> {
     let t_total = Instant::now();
 
-    let stdout = MemoryOutputPipe::new(1 << 20);
-    let stderr = MemoryOutputPipe::new(1 << 20);
+    let stdout = output::OutputCapture::new(1 << 20);
+    let stderr = output::OutputCapture::new(1 << 20);
 
     let mut linker: Linker<WasiP1Ctx> = Linker::new(&rt.engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
@@ -456,39 +474,19 @@ fn run_one(rt: &Runtime, code: &str) -> Result<EvalResponse> {
               result_ptr: i32,
               result_max: i32|
               -> i32 {
-            let mem = match caller.get_export("memory") {
-                Some(Extern::Memory(m)) => m,
-                _ => return -100,
-            };
-            let mut name_buf = vec![0u8; name_len as usize];
-            if mem.read(&caller, name_ptr as usize, &mut name_buf).is_err() {
-                return -101;
-            }
-            let mut payload_buf = vec![0u8; payload_len as usize];
-            if mem
-                .read(&caller, payload_ptr as usize, &mut payload_buf)
-                .is_err()
-            {
-                return -101;
-            }
-            let name = std::str::from_utf8(&name_buf).unwrap_or("");
-            match caps.dispatch(name, &payload_buf) {
-                Ok(response) => {
-                    if response.len() > result_max as usize {
-                        return capabilities::RC_RESPONSE_TOO_LARGE;
-                    }
-                    if mem
-                        .write(&mut caller, result_ptr as usize, &response)
-                        .is_err()
-                    {
-                        return -103;
-                    }
-                    response.len() as i32
-                }
-                Err(rc) => rc,
-            }
+            capabilities::host_call_bridge(
+                &caps,
+                &mut caller,
+                name_ptr,
+                name_len,
+                payload_ptr,
+                payload_len,
+                result_ptr,
+                result_max,
+            )
         },
     )?;
+    accel::add_to_linker(&mut linker, rt.accel)?;
 
     let mut b = WasiCtxBuilder::new();
     b.stdout(stdout.clone())
@@ -547,12 +545,10 @@ fn run_one(rt: &Runtime, code: &str) -> Result<EvalResponse> {
 
     drop(store); // releases pipes' senders; downstream can drain
 
-    let stdout_bytes = stdout.contents().to_vec();
-    let stderr_bytes = stderr.contents().to_vec();
     Ok(EvalResponse {
         rc,
-        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        stdout: stdout.take(),
+        stderr: stderr.take(),
         elapsed_us: t_total.elapsed().as_micros() as u64,
     })
 }
@@ -591,7 +587,12 @@ async fn eval_handler(
         warn!("send to worker failed: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::to_value(ErrorResponse { error: format!("{e}") }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("{e}"),
+                })
+                .unwrap(),
+            ),
         );
     }
     // Receive on a blocking thread (workers might take time; never block tokio)
@@ -602,16 +603,31 @@ async fn eval_handler(
             warn!("eval error: {e:#}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(ErrorResponse { error: format!("{e:#}") }).unwrap()),
+                Json(
+                    serde_json::to_value(ErrorResponse {
+                        error: format!("{e:#}"),
+                    })
+                    .unwrap(),
+                ),
             )
         }
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::to_value(ErrorResponse { error: format!("worker disconnected: {e}") }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("worker disconnected: {e}"),
+                })
+                .unwrap(),
+            ),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::to_value(ErrorResponse { error: format!("join error: {e}") }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("join error: {e}"),
+                })
+                .unwrap(),
+            ),
         ),
     }
 }
@@ -620,9 +636,7 @@ async fn eval_handler(
 // Session HTTP handlers
 // =====================================================================
 
-async fn create_session_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn create_session_handler(State(state): State<AppState>) -> impl IntoResponse {
     // Spawning the session thread does sync wasmtime work — keep tokio
     // out of it via spawn_blocking.
     let rt = state.runtime.clone();
@@ -631,17 +645,30 @@ async fn create_session_handler(
     match result {
         Ok(Ok(handle)) => (
             StatusCode::CREATED,
-            Json(serde_json::to_value(CreateSessionResponse {
-                session_id: handle.id.clone(),
-            }).unwrap()),
+            Json(
+                serde_json::to_value(CreateSessionResponse {
+                    session_id: handle.id.clone(),
+                })
+                .unwrap(),
+            ),
         ),
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::to_value(ErrorResponse { error: format!("{e:#}") }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("{e:#}"),
+                })
+                .unwrap(),
+            ),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::to_value(ErrorResponse { error: format!("join error: {e}") }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("join error: {e}"),
+                })
+                .unwrap(),
+            ),
         ),
     }
 }
@@ -654,9 +681,12 @@ async fn session_eval_handler(
     let Some(handle) = state.sessions.get(&session_id) else {
         return (
             StatusCode::NOT_FOUND,
-            Json(serde_json::to_value(ErrorResponse {
-                error: format!("session {session_id} not found"),
-            }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("session {session_id} not found"),
+                })
+                .unwrap(),
+            ),
         );
     };
     let result = tokio::task::spawn_blocking(move || handle.eval(req.code)).await;
@@ -666,12 +696,75 @@ async fn session_eval_handler(
             warn!("session {session_id}: eval error: {e:#}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(ErrorResponse { error: format!("{e:#}") }).unwrap()),
+                Json(
+                    serde_json::to_value(ErrorResponse {
+                        error: format!("{e:#}"),
+                    })
+                    .unwrap(),
+                ),
             )
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::to_value(ErrorResponse { error: format!("join error: {e}") }).unwrap()),
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("join error: {e}"),
+                })
+                .unwrap(),
+            ),
+        ),
+    }
+}
+
+async fn session_branch_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<BranchRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = session::validate_branch_codes(&req.codes) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::to_value(ErrorResponse { error }).unwrap()),
+        );
+    }
+    let Some(handle) = state.sessions.get(&session_id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("session {session_id} not found"),
+                })
+                .unwrap(),
+            ),
+        );
+    };
+    let result = tokio::task::spawn_blocking(move || handle.branch(req.codes)).await;
+    match result {
+        Ok(Ok(resp)) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())),
+        Ok(Err(e)) => {
+            warn!("session {session_id}: branch error: {e:#}");
+            (
+                if e.is::<session::UnbranchableResources>() {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                },
+                Json(
+                    serde_json::to_value(ErrorResponse {
+                        error: format!("{e:#}"),
+                    })
+                    .unwrap(),
+                ),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                serde_json::to_value(ErrorResponse {
+                    error: format!("join error: {e}"),
+                })
+                .unwrap(),
+            ),
         ),
     }
 }
@@ -687,11 +780,12 @@ async fn delete_session_handler(
     }
 }
 
-async fn list_sessions_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn list_sessions_handler(State(state): State<AppState>) -> impl IntoResponse {
     let map = state.sessions.map.lock().unwrap();
-    let infos: Vec<SessionInfo> = map.values().map(|h| SessionInfo::from(h.as_ref())).collect();
+    let infos: Vec<SessionInfo> = map
+        .values()
+        .map(|h| SessionInfo::from(h.as_ref()))
+        .collect();
     Json(infos)
 }
 
@@ -715,16 +809,17 @@ enum Job {
 
 fn load_capabilities() -> Result<Capabilities> {
     if let Ok(path) = std::env::var("WISP_CAPABILITIES_JSON") {
-        let bytes = std::fs::read(&path)
-            .map_err(|e| anyhow!("failed to read {path}: {e}"))?;
-        Ok(serde_json::from_slice(&bytes)
-            .map_err(|e| anyhow!("failed to parse {path}: {e}"))?)
+        let bytes = std::fs::read(&path).map_err(|e| anyhow!("failed to read {path}: {e}"))?;
+        Ok(serde_json::from_slice(&bytes).map_err(|e| anyhow!("failed to parse {path}: {e}"))?)
     } else {
         Ok(Capabilities::default())
     }
 }
 
-fn worker_loop(rt: Arc<Runtime>, rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Job>>>) {
+fn worker_loop(
+    rt: Arc<Runtime>,
+    rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Job>>>,
+) {
     loop {
         let job = {
             let lock = rx.lock().unwrap();
@@ -771,9 +866,21 @@ fn main() -> Result<()> {
     let workers: usize = std::env::var("WISP_WORKERS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+        });
 
-    info!(?python_wasm, ?host_root, ?wisp_lib_root, ?snapshot_path, ?bind, workers, "starting wisp-runtime");
+    info!(
+        ?python_wasm,
+        ?host_root,
+        ?wisp_lib_root,
+        ?snapshot_path,
+        ?bind,
+        workers,
+        "starting wisp-runtime"
+    );
 
     // Capability config: load from $WISP_CAPABILITIES_JSON file if set,
     // otherwise default to no capabilities (sandbox can run pure Python
@@ -831,6 +938,8 @@ fn main() -> Result<()> {
             .route("/v1/session", post(create_session_handler))
             .route("/v1/sessions", get(list_sessions_handler))
             .route("/v1/session/:id/eval", post(session_eval_handler))
+            // Fork the session state N ways, run in parallel, gather.
+            .route("/v1/session/:id/branch", post(session_branch_handler))
             .route("/v1/session/:id", delete(delete_session_handler))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind(&bind).await?;

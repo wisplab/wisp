@@ -135,3 +135,107 @@ open a GitHub issue at https://github.com/wisplab/wisp/issues. There's
 no embargo process today — we're early enough that public discussion
 is fine. We'll set up a security-advisory process if/when we have
 users that need it.
+
+## External review findings (2026-07-04)
+
+Findings from a code read that are NOT already covered by the "What's
+NOT defended" table above, or where a claimed defense doesn't hold as
+written. Ordered by severity. Fix status is recorded under each
+finding; the remaining findings are kept here for follow-up.
+
+### 1. SSRF — allowlist checks the hostname string, not the resolved IP (HIGH)
+
+`web_fetch` defends redirect-SSRF (`redirects(0)`), scheme-SSRF
+(http/https only), and does a hostname allowlist — but never checks
+the IP that hostname resolves to (`capabilities.rs:371`; ureq resolves
++ connects afterward). An allowed name that resolves to an internal
+address reaches internal services.
+
+- **Exploit:** allowlist contains `*.example.com` (or dev `*`);
+  attacker points `x.example.com` A-record at `169.254.169.254` →
+  `web_fetch` reads cloud metadata → steals instance IAM credentials.
+  Exact third-party hostnames (`api.openai.com`) are largely safe; the
+  gap bites with wildcards, attacker-influenced DNS, or `*`.
+- **Fix:** resolve DNS host-side; reject if any resolved IP is in
+  private / loopback / link-local / IPv6-ULA ranges; connect to the
+  pinned, already-validated IP (defeats DNS-rebinding TOCTOU).
+
+### 2. `shell` runs unsandboxed on the host and voids the other allowlists (HIGH if enabled)
+
+`dispatch_shell` (`capabilities.rs:183`) spawns a native host process:
+same uid, full host FS, full network, **inherits the daemon's
+environment**, guest-controlled cwd, no rlimits, no namespaces. The
+basename allowlist is not a boundary for this.
+
+- **File-read allowlist bypass:** `shell` has no path scoping. Any
+  allowed file-reading tool (`grep`/`find`/`head`/`cat`/`wc`/`tail`…)
+  reads any file the daemon can — e.g. `shell(["grep","x","/etc/shadow"])`
+  — sidestepping `file_read.allow_prefixes` entirely.
+- **Env/secret leak:** child inherits daemon env; a command that
+  surfaces env leaks any cloud creds / API keys held there.
+- **Fix:** run `shell` inside a real sandbox (namespaces + seccomp +
+  cleared env + rlimits + scoped cwd/FS) or route it through the
+  Firecracker path. A basename allowlist ≠ security boundary.
+
+### 3. WASI preopen is an always-on FS-read path outside the capability model (MEDIUM)
+
+`preopened_dir(&host_root, "/", READ, READ)` (`main.rs:499`,
+`session.rs:199`) lets sandboxed Python `open()`-read anything under
+`WISP_HOST_ROOT` with **no capability and no allowlist** — contradicting
+the doc's "no filesystem I/O without a capability." Blast radius =
+whatever `WISP_HOST_ROOT` is set to; a broad value (or `/`) exposes the
+whole host read-only.
+
+- **Fix:** mount only the CPython stdlib subtree, not a broad root.
+  Document the preopen as an implicit, always-on read capability.
+
+### 4. `file_write` follows a symlink at the target basename (MEDIUM, defense-in-depth)
+
+`dispatch_file_write` (`capabilities.rs:288`) canonicalizes the parent
+and prefix-checks, but `fs::write(&target)` follows `target` if its
+final component is a symlink pointing outside the allowlist (e.g.
+`/workspace/x -> /etc/cron.d/pwn`). Requires planting the symlink first
+(via `shell ln`, or a pre-seeded / shared workspace), so it composes
+with #2 into a write-escape rather than being standalone.
+
+- **Fix:** open the final component with `O_NOFOLLOW` (or reject if
+  `symlink_metadata` shows a symlink); canonicalize the full target
+  when it already exists.
+
+### 5. Host allocates from a guest-supplied length — the cap is on the wrong side of the trust boundary (MEDIUM, defense-in-depth)
+
+`host_call_impl` (`session.rs:313`, `main.rs:463`) does
+`vec![0u8; payload_len as usize]` trusting the guest's i32 length, with
+no host-side bound and no negative-check. The "capped before allocation"
+claim above is satisfied only by the **in-sandbox** C shim
+(`wisp_entry.c:73`) — i.e. the host relies on the sandboxed side to
+protect it. Not reachable from pure Python today, but if the module is
+swapped, the shim regresses, or a raw `host_call` path appears, a
+negative length `as usize` becomes astronomical → allocation abort →
+the whole daemon crashes, taking every tenant's session with it.
+
+- **Fix:** move the bound + reject-negative to the host side; never
+  trust a guest-controlled length for a host allocation.
+- **FIXED (2026-07-09):** the host-side `host_call` is now a single
+  shared `capabilities::host_call_bridge`, which rejects negative
+  lengths (`usize::try_from`) and caps name ≤ 4 KiB / payload ≤ 16 MiB
+  *before* any `vec!` allocation. Both the stateless and session paths
+  call it; the duplicated `host_call_impl` is gone. A new host import
+  surface landed alongside it (`wisp_dgemm`/`wisp_sgemm`, see
+  `crates/wisp-runtime/src/accel.rs`) — it validates every
+  guest-supplied pointer/stride/dimension against linear-memory bounds
+  and rejects output/input aliasing before touching memory, so the
+  same "don't trust guest lengths" discipline applies there from day
+  one.
+
+### Priority note on already-acknowledged gaps
+
+Of the gaps already listed as "NOT defended," two dominate for any
+multi-tenant deployment and should land before feature work:
+
+- **No per-call CPU/memory limits** — one `while True: pass` pins a
+  worker; N calls = full DoS. Wire `epoch_interruption` +
+  `StoreLimitsBuilder` (≈ half a day).
+- **No daemon auth** — the "trusted gateway in front" assumption must
+  be stated in bold at the top of the README; exposing :9000 directly
+  is open RCE-by-capability.

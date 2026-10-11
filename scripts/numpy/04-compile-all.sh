@@ -33,17 +33,27 @@ FAILURES="$NUMPY_DIR/build-wasi/failures.log"
 mkdir -p "$OBJS"
 : > "$FAILURES"
 
-# Shared flag set — same as 03-compile-one.sh.
+# Shared flag set — same as 03-compile-one.sh, plus SIMD.
+# -msimd128 lets clang autovectorize numpy's baseline C loops to wasm
+# SIMD128 (numpy's own dispatch framework has no wasm backend, so
+# autovectorization is the only vector path). -mrelaxed-simd unlocks
+# FMA — NOTE: relaxed ops may differ in last-bit rounding across
+# hosts; drop it for a bit-deterministic build.
 COMMON_FLAGS=(
   --target=wasm32-wasip1
   --sysroot="$SYSROOT"
-  -O2
+  -O3
+  -msimd128
+  -mrelaxed-simd
   -fPIC
   -DPy_BUILD_CORE_BUILTIN
   -DNPY_INTERNAL_BUILD=1
   -DHAVE_NPY_CONFIG_H=1
   -DNPY_NO_DEPRECATED_API=NPY_API_VERSION
   -DNPY_DISABLE_OPTIMIZATION=1
+  # Route matmul/dot through the cblas_* API, provided in-module by
+  # wisp_accel.c (host BLAS offload with in-wasm fallback).
+  -DHAVE_CBLAS
   # CPython internals
   -I"$CPYTHON_DIR/Include"
   -I"$CPYTHON_DIR/Include/internal"
@@ -67,6 +77,7 @@ COMMON_FLAGS=(
 # expanded them.
 COMMON_SRC=(
   src/common/array_assign.c
+  src/common/cblasfuncs.c         # dot() via cblas — needs HAVE_CBLAS
   src/common/mem_overlap.c
   src/common/npy_argparse.c
   src/common/npy_hashtable.c

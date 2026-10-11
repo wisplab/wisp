@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-11",
+  "bars": 2000000,
+  "combinations": 40,
+  "workers_per_side": 8,
+  "wisp": {
+    "setup_ms": 186.0,
+    "snapshot_ms": 132.1,
+    "branch_ms": 610.3,
+    "wall_ms": 796.3
+  },
+  "native_reload_per_task_ms": 1041.3,
+  "native_fork_shared_precompute_ms": 279.4,
+  "matched_combinations": 40,
+  "absolute_tolerance": 1e-06,
+  "note": "single laptop run; guest PnL rounded to six decimal places"
+}
