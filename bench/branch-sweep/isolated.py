@@ -273,13 +273,19 @@ def main():
     parser.add_argument('--no-prelink', action='store_true')
     parser.add_argument('--wisp-binary', type=pathlib.Path, help='baseline or candidate release daemon')
     parser.add_argument('--wisp-reactor', type=pathlib.Path, help='explicit reactor for reproducible RNG comparisons')
+    parser.add_argument('--idle-guard', action='store_true', help='require quiet CPU, normal memory pressure and minimal swapping before warmup/each round')
+    parser.add_argument('--idle-timeout', type=int, default=600, help='maximum seconds to wait at each load gate')
     parser.add_argument('--baseline-binary', type=pathlib.Path, help='also interleave an older Wisp binary in every round')
     args = parser.parse_args()
     if platform.system() != 'Darwin':
         parser.error('this Seatbelt benchmark requires macOS')
-    if args.bars <= 300 or not 1 <= args.grid <= 64 or args.workers < 1 or args.repeats < 3:
+    if args.bars <= 300 or not 1 <= args.grid <= 64 or args.workers < 1 or args.repeats < 3 or args.idle_timeout < 1:
         parser.error('invalid bars/grid/workers/repeats')
     root = pathlib.Path(__file__).resolve().parents[2]
+    load_log = args.output.with_suffix('.load.jsonl')
+    if args.idle_guard:
+        from load_guard import wait_until_idle
+        wait_until_idle(load_log, 'before-startup', args.idle_timeout)
     binary = (args.wisp_binary or root / 'target/release/wisp-runtime').resolve()
     reactor = (args.wisp_reactor or root / 'runtime/cpython-wasi/vendor/cpython/cross-build/wasm32-wasip1/python-reactor.wasm').resolve()
     grid = [list(pair) for pair in make_grid(args.grid)]
@@ -410,6 +416,8 @@ print(json.dumps({{'python': sys.version.split()[0], 'numpy': np.__version__, 'p
                         value['total_ms'] = (time.perf_counter() - t) * 1000
                         return value
                     # Discard one full sweep per backend, then shuffle order in every round.
+                    if args.idle_guard:
+                        wait_until_idle(load_log, 'before-warmup', args.idle_timeout)
                     for mode in modes:
                         run(mode)
                     rounds = []
@@ -419,6 +427,9 @@ print(json.dumps({{'python': sys.version.split()[0], 'numpy': np.__version__, 'p
                         order = modes.copy()
                         rng.shuffle(order)
                         row = {'order': order, 'vm_before': vm_counters()}
+                        if args.idle_guard:
+                            row['load_gate'] = wait_until_idle(load_log, f'round-{i+1}', args.idle_timeout)
+                            row['vm_before'] = vm_counters()
                         for mode in order:
                             row[mode] = run(mode)
                         for mode in (m for m in modes if m != 'wisp'):
@@ -429,6 +440,10 @@ print(json.dumps({{'python': sys.version.split()[0], 'numpy': np.__version__, 'p
                         row['vm_after'] = vm_counters()
                         print(f'round {i+1}: ' + ', '.join(f"{m}={row[m]['total_ms']:.1f}ms" for m in modes), flush=True)
                         rounds.append(row)
+                        if args.idle_guard:
+                            checkpoint = args.output.with_suffix('.rounds.jsonl')
+                            with checkpoint.open('a') as file:
+                                file.write(json.dumps(row, separators=(',', ':'))+'\n')
                     summary = {}
                     for mode in modes:
                         summary[mode] = {}
@@ -452,6 +467,7 @@ print(json.dumps({{'python': sys.version.split()[0], 'numpy': np.__version__, 'p
                               'wisp_reactor_path': str(reactor), 'wisp_reactor_sha256': hashlib.sha256(reactor.read_bytes()).hexdigest(),
                               'repeats': args.repeats, 'dataset': args.dataset,
                               'profile_arrays': args.profile_arrays, 'requested_snapshot_backend': args.snapshot_backend,
+                              'idle_guard': args.idle_guard, 'idle_timeout': args.idle_timeout if args.idle_guard else None,
                               'prelink': not args.no_prelink,
                               'profile': PROFILE, 'metadata': metadata,
                               'max_absolute_error': max_error, 'summary': summary, 'comparison': comparison, 'rounds': rounds}

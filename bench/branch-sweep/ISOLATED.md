@@ -157,3 +157,33 @@ path through `WISP_PYTHON_WASM` and records its SHA-256 as well as the daemon
 SHA-256. Without the option it explicitly uses the repository's default
 reactor. This prevents an inherited environment variable selecting another
 reactor. The optional older-binary backend uses the same selected reactor.
+
+## Quiet-load measurements
+
+`--idle-guard` checks background load before starting services, before the
+discarded warmup, and before each measured round. Three consecutive samples
+must have at least 80% CPU idle, normal macOS memory pressure (level 1), no
+swap-outs and at most 64 swap-in pages/second. Each sample uses the second
+`top` interval and contemporaneous `vm_stat` deltas. Observations, including
+failed gates, are appended immediately to the output's `.load.jsonl` file.
+The checks and waits are outside timed work. Measured rounds still record
+VM counters: the benchmark itself can create pressure even after a quiet
+start. A timeout fails the run rather than labeling noisy data as quiet.
+
+For the RNG change, use balanced single-service ABBA blocks:
+
+```sh
+python3 bench/branch-sweep/stable-rng.py \
+  --reference-reactor /tmp/wisp-rng-before-20261011/python-reactor.wasm \
+  --output-prefix bench/branch-sweep/results/rng-stable --repeats 9
+```
+
+This uses the original 2M-bar/40-parameter/eight-child workload and the same
+Rust daemon, one complete discarded warmup per block, nine shuffled rounds
+per block, and the order before/after/after/before. It aggregates 18 rounds
+per reactor, preserves every block, and reports adjacent-block Native
+controls as well as ratios of medians and same-round Wisp/Native ratios.
+No slow round is removed. The wrapper verifies exact Wisp output equality
+and that the daemon hash is constant while reactor hashes differ. Quiet
+pre-round gates alone do not establish an end-to-end speedup; dispersion,
+Native controls, order effects and measured swap deltas still matter.
