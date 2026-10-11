@@ -272,6 +272,7 @@ def main():
     parser.add_argument('--snapshot-backend', choices=('auto', 'file'), default='auto')
     parser.add_argument('--no-prelink', action='store_true')
     parser.add_argument('--wisp-binary', type=pathlib.Path, help='baseline or candidate release daemon')
+    parser.add_argument('--wisp-reactor', type=pathlib.Path, help='explicit reactor for reproducible RNG comparisons')
     parser.add_argument('--baseline-binary', type=pathlib.Path, help='also interleave an older Wisp binary in every round')
     args = parser.parse_args()
     if platform.system() != 'Darwin':
@@ -280,6 +281,7 @@ def main():
         parser.error('invalid bars/grid/workers/repeats')
     root = pathlib.Path(__file__).resolve().parents[2]
     binary = (args.wisp_binary or root / 'target/release/wisp-runtime').resolve()
+    reactor = (args.wisp_reactor or root / 'runtime/cpython-wasi/vendor/cpython/cross-build/wasm32-wasip1/python-reactor.wasm').resolve()
     grid = [list(pair) for pair in make_grid(args.grid)]
     native = {}
     daemon = None
@@ -311,6 +313,7 @@ def main():
                     daemon = subprocess.Popen([str(binary)], cwd=root,
                         env={**env, 'WISP_BIND': f'127.0.0.1:{port}', 'WISP_WORKERS': str(args.workers),
                              'WISP_BRANCH_PARALLEL': str(args.workers), 'WISP_ACCEL': '1',
+                             'WISP_PYTHON_WASM': str(reactor),
                              'WISP_SNAPSHOT_PATH': str(pathlib.Path(tmp) / 'snapshot.bin'),
                              'WISP_BRANCH_SNAPSHOT': args.snapshot_backend,
                              'WISP_BRANCH_PRELINK': '0' if args.no_prelink else '1'}, stdout=log, stderr=log)
@@ -366,6 +369,7 @@ print(json.dumps({{'python': sys.version.split()[0], 'numpy': np.__version__, 'p
                             baseline_daemon = subprocess.Popen([str(args.baseline_binary.resolve())], cwd=root,
                                 env={**env, 'WISP_BIND': f'127.0.0.1:{baseline_port}', 'WISP_WORKERS': str(args.workers),
                                      'WISP_BRANCH_PARALLEL': str(args.workers), 'WISP_ACCEL': '1',
+                                     'WISP_PYTHON_WASM': str(reactor),
                                      'WISP_SNAPSHOT_PATH': str(pathlib.Path(tmp) / 'baseline-snapshot.bin')},
                                 stdout=baseline_log, stderr=baseline_log)
                         deadline = time.monotonic() + 120
@@ -445,6 +449,7 @@ print(json.dumps({{'python': sys.version.split()[0], 'numpy': np.__version__, 'p
                               'memory_bytes': int(subprocess.check_output(['sysctl', '-n', 'hw.memsize'], text=True)), 'cpus': os.cpu_count()},
                               'python': sys.version, 'git_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(), 'bars': args.bars, 'grid': grid, 'workers': args.workers,
                               'wisp_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                              'wisp_reactor_path': str(reactor), 'wisp_reactor_sha256': hashlib.sha256(reactor.read_bytes()).hexdigest(),
                               'repeats': args.repeats, 'dataset': args.dataset,
                               'profile_arrays': args.profile_arrays, 'requested_snapshot_backend': args.snapshot_backend,
                               'prelink': not args.no_prelink,

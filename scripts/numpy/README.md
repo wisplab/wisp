@@ -243,3 +243,30 @@ meson + WASI cross-file story is more battle-tested upstream.
 4. Stage pure-Python `numpy/` into the PYTHONPATH mount.
 5. Smoke test: `import numpy; print(numpy.array([1,2,3]).sum())`
    inside the sandbox via the wisp daemon.
+
+## WASM PCG64 hot-path rebuild
+
+`04-compile-all.sh` applies `patch-pcg64.py` before compiling. The patch is
+idempotent, checks the expected NumPy 1.26.4 source, and only selects the new
+integer recurrence for `__wasm32__` with native `pcg128_t`. It keeps the ABI,
+multiplier, increment, output permutation and all samplers unchanged. No RNG
+state is sent to the host. Existing jump-ahead code remains upstream.
+
+To rebuild just the two affected translation units (after the normal NumPy
+prepare/config/Cython stages):
+
+```sh
+bash scripts/numpy/04-compile-all.sh --rng-only
+bash scripts/numpy/05-archive.sh
+bash runtime/cpython-wasi/wisp_entry/build.sh
+python3 scripts/numpy/test-pcg64.py
+```
+
+Save the old reactor before rebuilding to compare exact streams and states:
+
+```sh
+python3 bench/branch-sweep/verify-rng.py --reference-reactor /path/to/old.wasm \
+  --output bench/branch-sweep/results/rng-verification.json
+```
+
+See `bench/branch-sweep/RNG-OPTIMIZATION.md` for the experiment and limits.

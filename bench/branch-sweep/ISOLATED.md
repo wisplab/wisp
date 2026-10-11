@@ -148,3 +148,12 @@ an older service to each shuffled round; it needs extra RAM. `--profile-arrays`
 adds parent/child operation timers and belongs in a separate diagnostic run.
 `--snapshot-backend file` / `--no-prelink` select candidate ablations. Global
 VM counters are recorded outside backend timing in newer results.
+
+## Selecting a reactor
+
+Use `--wisp-reactor /absolute/path/python-reactor.wasm` to compare guest
+changes while holding the Rust daemon fixed. The harness passes this exact
+path through `WISP_PYTHON_WASM` and records its SHA-256 as well as the daemon
+SHA-256. Without the option it explicitly uses the repository's default
+reactor. This prevents an inherited environment variable selecting another
+reactor. The optional older-binary backend uses the same selected reactor.

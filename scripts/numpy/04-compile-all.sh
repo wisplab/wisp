@@ -18,6 +18,12 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--rng-only" ]; }; then
+  echo "Usage: $0 [--rng-only]" >&2
+  exit 1
+fi
+python3 patch-pcg64.py || exit 1
+
 ROOT="$(cd ../../runtime/cpython-wasi && pwd)"
 NUMPY_DIR="$ROOT/vendor/numpy-1.26.4"
 WASI_SDK="$ROOT/toolchain/wasi-sdk-32.0-arm64-macos"
@@ -352,6 +358,14 @@ compile_gen() {
   fi
   : > "$FAILURES.tmp"
 }
+
+if [ "${1:-}" = "--rng-only" ]; then
+  compile_c ../random/src/pcg64/pcg64.c
+  compile_c ../random/_pcg64.c -UNPY_NO_DEPRECATED_API -DNPY_NO_DEPRECATED_API=0
+  echo "PCG64 objects: PASS=$PASS FAIL=$FAIL"
+  [ "$PASS" -eq 2 ] && [ "$FAIL" -eq 0 ]
+  exit $?
+fi
 
 echo "==> Compiling common (${#COMMON_SRC[@]} files)"
 for f in "${COMMON_SRC[@]}"; do compile_c "$f"; done
