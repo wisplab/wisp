@@ -87,6 +87,17 @@ Fixes following this reproduction:
   automatically on success or failure. Session code buffers are freed
   after execution rather than accumulating across calls.
 
+## Isolated Native comparison
+
+See [ISOLATED.md](ISOLATED.md) for the newer comparison using a fresh Native
+process plus macOS Seatbelt for every parameter, matched to Wisp's fresh
+branch model. It includes verified filesystem/network/exec restrictions,
+shuffled repeated runs, full-precision result checks, warm/cold measurement
+boundaries, and isolation limitations. On the current M2, the original 2M
+sweep's warm medians are 337 ms (isolated Native) and 538 ms (Wisp); the
+10K sweep reverses the ordering at 104 ms and 63 ms. Laptop noise and
+NumPy version differences limit attribution of a precise runtime penalty.
+
 ## Historical result (M4 Pro, 40 combos × 2M bars)
 
 ```
@@ -113,12 +124,23 @@ worker counts. Wisp's per-child sandbox isolation and NumPy host
 offload are useful properties; this benchmark does not establish
 superior compute throughput over a native shared-state pool.
 
-## Current limitation
+## Snapshot backends
 
-The branch snapshot is written to a temp file (≈100 ms for 30 MB here)
-and the parent blocks for that write. For very large parent state or
-very high branch frequency this dominates. A future version can map the
-parent memory `MAP_PRIVATE` directly per child without the file
-round-trip (the per-call `/v1/eval` path already does this against the
-boot snapshot fd); the temp-file version was the correct first cut for
-correctness.
+On macOS, branches now capture immutable memory with `mach_vm_remap` and
+`copy=TRUE`, then create a separate COW mapping for each child. Parent and
+child writes remain private; the snapshot has no filesystem copy. Every
+branch still gets a fresh Wasmtime Store, Instance, WASI resource table and
+output buffers. Store-independent imports are resolved once per daemon.
+
+Other platforms retain the anonymous, owner-only file snapshot. macOS also
+falls back to that path if kernel remapping fails. Set
+`WISP_BRANCH_SNAPSHOT=file` to force the portable path, and
+`WISP_BRANCH_PRELINK=0` to disable prepared imports for diagnostic comparisons.
+The parent is blocked only while capture runs. Open WASI handles must still
+be closed before branching; host-resource cloning is not implemented.
+
+Responses include `snapshot_bytes`, `snapshot_backend`, and per-child
+`timings` (`setup_us`, `eval_us`, `cleanup_us`). Guest execution time includes
+NumPy computation and first-touch/COW faults, not just interpreter overhead.
+See [OPTIMIZATION.md](OPTIMIZATION.md) for the measured bottlenecks and
+matched before/after benchmark.

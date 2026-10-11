@@ -120,15 +120,15 @@ try:
     ok(request(path + '/eval', {'code': 'concurrent_value = 10'}))
     with concurrent.futures.ThreadPoolExecutor() as pool:
         branch = pool.submit(request, path + '/branch', {'codes': [
-            'import time; time.sleep(2); print(concurrent_value)'
+            'import time; time.sleep(2); print(concurrent_value, int(big[0]), int(big[-1])); child_growth = np.arange(6000000, dtype=np.float64); assert child_growth[-1] == 5999999; assert int(big.sum(dtype=np.int64)) == 499999500000'
         ]})
         time.sleep(0.3)
         assert not branch.done(), 'slow child must still be running'
-        assert ok(request(path + '/eval', {'code': 'concurrent_value = 20; print("parent free")'})) == 'parent free\n'
+        assert ok(request(path + '/eval', {'code': 'concurrent_value = 20; big.fill(-7); parent_growth = np.ones(4000000); print("parent free")'})) == 'parent free\n'
         assert not branch.done(), 'parent eval was blocked until child completion'
-        assert ok(branch.result()['results'][0]) == '10\n'
-    assert ok(request(path + '/eval', {'code': 'print(concurrent_value)'})) == '20\n'
-    print('concurrency: parent runs during children; snapshot remains immutable')
+        assert ok(branch.result()['results'][0]) == '10 0 999999\n'
+    assert ok(request(path + '/eval', {'code': 'assert (big == -7).all(); assert parent_growth[-1] == 1; assert "child_growth" not in globals(); print(concurrent_value)'})) == '20\n'
+    print('concurrency: parent writes and parent/child growth preserve immutable snapshot')
 finally:
     request(f'/v1/session/{sid}', method='DELETE')
 print('PASS')

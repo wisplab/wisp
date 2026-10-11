@@ -28,8 +28,6 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
-use std::io::Write;
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -38,6 +36,7 @@ use wasmtime::*;
 use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
+use crate::branch_memory::BranchMemory;
 use crate::capabilities;
 use crate::output::OutputCapture;
 use crate::{indent_lines, EvalResponse, Runtime, PYTHONPATH_GUEST, WISP_LIB_GUEST};
@@ -122,9 +121,9 @@ impl SessionHandle {
 
     /// Fork the session's CURRENT state into one COW child per code
     /// string, run them in parallel, and return the results in order.
-    /// The parent session is untouched (children map the state
-    /// MAP_PRIVATE) and blocked only while the fork snapshot is
-    /// written.
+    /// The parent session is untouched (children use private COW mappings)
+    /// and blocked only while the fork snapshot is
+    /// captured.
     pub fn branch(&self, codes: Vec<String>) -> Result<BranchResponse> {
         validate_branch_codes(&codes).map_err(|e| anyhow!(e))?;
         let (tx, rx) = std::sync::mpsc::channel();
@@ -136,7 +135,7 @@ impl SessionHandle {
             .recv()
             .map_err(|e| anyhow!("session reply channel closed: {e}"))??;
         // The session thread can now process parent evals while this
-        // request's blocking thread runs children against the immutable file.
+        // request's blocking thread runs children against the immutable snapshot.
         let result = run_branches(&self.runtime, snapshot, codes);
         self.touch();
         result
@@ -508,13 +507,12 @@ fn run_eval_in_session(rt: &Runtime, state: &mut SessionState, code: &str) -> Re
 
 // ---- branch: fork the session state N ways ------------------------------
 
-/// Snapshot the session's current linear memory to a temp file, then
+/// Capture the session's current linear memory as an immutable COW source, then
 /// run each code string in its own COW child instance mapped from that
 /// snapshot. Children share all pre-branch pages physically (dirty
 /// pages only per child); the parent is never mutated.
 struct BranchSnapshot {
-    file: std::fs::File,
-    len: usize,
+    memory: BranchMemory,
     pages: u64,
     snapshot_us: u64,
     started: Instant,
@@ -534,18 +532,12 @@ fn capture_branch(state: &mut SessionState) -> Result<BranchSnapshot> {
         .ok_or_else(|| anyhow!("no memory export on session instance"))?;
     let branch_pages = mem.size(&state.store);
     let data = mem.data(&state.store);
-    let branch_len = data.len();
-
-    // The session thread is parked in this call, so the memory is
-    // quiescent while we copy it out.
-    // Anonymous, owner-only temp file: no stale files on any error path,
-    // and no world-readable copy of the parent's Python state.
-    let mut file = tempfile::tempfile()?;
-    file.write_all(data)?;
+    // Capture while the parent is quiescent. macOS uses kernel COW without
+    // copying the heap to a file; portable fallback remains anonymous/private.
+    let memory = BranchMemory::capture(data)?;
     let snapshot_us = t0.elapsed().as_micros() as u64;
     Ok(BranchSnapshot {
-        file,
-        len: branch_len,
+        memory,
         pages: branch_pages,
         snapshot_us,
         started: t0,
@@ -557,8 +549,6 @@ fn run_branches(
     snapshot: BranchSnapshot,
     codes: Vec<String>,
 ) -> Result<BranchResponse> {
-    let fd = snapshot.file.as_raw_fd();
-
     let n = codes.len();
     let queue: Mutex<Vec<(usize, String)>> = Mutex::new(codes.into_iter().enumerate().collect());
     let results: Mutex<Vec<Option<BranchItem>>> = Mutex::new((0..n).map(|_| None).collect());
@@ -577,7 +567,7 @@ fn run_branches(
             s.spawn(|| loop {
                 let job = queue.lock().unwrap().pop();
                 let Some((idx, code)) = job else { break };
-                let item = match run_branch_one(rt, fd, snapshot.len, snapshot.pages, &code) {
+                let item = match run_branch_one(rt, &snapshot.memory, snapshot.pages, &code) {
                     Ok(item) => item,
                     Err(e) => BranchItem {
                         rc: -1000,
@@ -585,6 +575,7 @@ fn run_branches(
                         stderr: String::new(),
                         elapsed_us: 0,
                         error: Some(format!("{e:#}")),
+                        timings: None,
                     },
                 };
                 results.lock().unwrap()[idx] = Some(item);
@@ -601,29 +592,22 @@ fn run_branches(
     Ok(BranchResponse {
         results,
         snapshot_us: snapshot.snapshot_us,
+        snapshot_bytes: snapshot.memory.len,
+        snapshot_backend: snapshot.memory.backend(),
         elapsed_us: snapshot.started.elapsed().as_micros() as u64,
     })
 }
 
-/// One COW child: fresh Instance on the daemon's COW engine, grown to
-/// the branch snapshot's size, then MAP_FIXED-remapped so its memory
-/// IS the branch snapshot (private mapping — writes stay local).
-/// Ordering matters: grow first (grow_to would re-map boot-snapshot
-/// content over anything below snapshot_len), then remap.
-fn run_branch_one(
-    rt: &Runtime,
-    branch_fd: RawFd,
-    branch_len: usize,
-    branch_pages: u64,
-    code: &str,
-) -> Result<BranchItem> {
-    let t = Instant::now();
-    let stdout_pipe = OutputCapture::new(1 << 20);
-    let stderr_pipe = OutputCapture::new(1 << 20);
-
-    let mut linker: Linker<WasiP1Ctx> = Linker::new(&rt.engine);
+/// Resolve WASI/host imports once while retaining a fresh Store and Instance
+/// for every child. The linker holds only immutable daemon capabilities.
+pub(crate) fn prepare_branch(
+    engine: &Engine,
+    module: &Module,
+    caps: Arc<capabilities::Capabilities>,
+    accel: bool,
+) -> Result<InstancePre<WasiP1Ctx>> {
+    let mut linker: Linker<WasiP1Ctx> = Linker::new(engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s| s)?;
-    let caps = rt.capabilities.clone();
     linker.func_wrap(
         "env",
         "host_call",
@@ -647,7 +631,25 @@ fn run_branch_one(
             )
         },
     )?;
-    crate::accel::add_to_linker(&mut linker, rt.accel)?;
+    crate::accel::add_to_linker(&mut linker, accel)?;
+
+    Ok(linker.instantiate_pre(module)?)
+}
+
+/// One COW child: fresh Instance on the daemon's COW engine, grown to
+/// the branch snapshot's size, then privately remapped so its memory
+/// IS the branch snapshot (private mapping — writes stay local).
+/// Ordering matters: grow first (grow_to would re-map boot-snapshot
+/// content over anything below snapshot_len), then remap.
+fn run_branch_one(
+    rt: &Runtime,
+    snapshot: &BranchMemory,
+    branch_pages: u64,
+    code: &str,
+) -> Result<BranchItem> {
+    let t = Instant::now();
+    let stdout_pipe = OutputCapture::new(1 << 20);
+    let stderr_pipe = OutputCapture::new(1 << 20);
 
     let mut b = WasiCtxBuilder::new();
     b.stdout(stdout_pipe.clone())
@@ -661,7 +663,12 @@ fn run_branch_one(
     }
     let wasi = b.build_p1();
     let mut store = Store::new(&rt.engine, wasi);
-    let instance = linker.instantiate(&mut store, &rt.module)?;
+    let instance = if let Some(pre) = &rt.branch_pre {
+        pre.instantiate(&mut store)?
+    } else {
+        prepare_branch(&rt.engine, &rt.module, rt.capabilities.clone(), rt.accel)?
+            .instantiate(&mut store)?
+    };
     let mem = instance
         .get_memory(&mut store, "memory")
         .ok_or_else(|| anyhow!("no memory export on branch instance"))?;
@@ -670,22 +677,10 @@ fn run_branch_one(
     if cur < branch_pages {
         mem.grow(&mut store, branch_pages - cur)?;
     }
-    let base = mem.data_ptr(&mut store);
-    let r = unsafe {
-        libc::mmap(
-            base as *mut libc::c_void,
-            branch_len,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_FIXED,
-            branch_fd,
-            0,
-        )
-    };
-    if r == libc::MAP_FAILED {
-        return Err(anyhow!(
-            "branch: re-mmap snapshot failed: {}",
-            std::io::Error::last_os_error()
-        ));
+    // Grow first so Wasmtime owns the whole committed region, then replace
+    // only that region. The custom memory's reservation and guards stay intact.
+    unsafe {
+        snapshot.restore(mem.data_ptr(&mut store), mem.data_size(&store))?;
     }
 
     let alloc = instance.get_typed_func::<i32, i32>(&mut store, "wisp_alloc")?;
@@ -697,8 +692,13 @@ fn run_branch_one(
     let bytes = wrapped.as_bytes();
     let ptr = alloc.call(&mut store, bytes.len() as i32)?;
     mem.data_mut(&mut store)[ptr as usize..ptr as usize + bytes.len()].copy_from_slice(bytes);
+    let setup_us = t.elapsed().as_micros() as u64;
+    let executing = Instant::now();
     let rc = eval.call(&mut store, (ptr, bytes.len() as i32))?;
+    let eval_us = executing.elapsed().as_micros() as u64;
+    let cleanup = Instant::now();
     drop(store);
+    let cleanup_us = cleanup.elapsed().as_micros() as u64;
 
     Ok(BranchItem {
         rc,
@@ -706,6 +706,11 @@ fn run_branch_one(
         stderr: stderr_pipe.take(),
         elapsed_us: t.elapsed().as_micros() as u64,
         error: None,
+        timings: Some(BranchTimings {
+            setup_us,
+            eval_us,
+            cleanup_us,
+        }),
     })
 }
 
@@ -765,6 +770,13 @@ pub struct BranchRequest {
 }
 
 #[derive(Debug, Serialize)]
+pub struct BranchTimings {
+    pub setup_us: u64,
+    pub eval_us: u64,
+    pub cleanup_us: u64,
+}
+
+#[derive(Debug, Serialize)]
 pub struct BranchItem {
     pub rc: i32,
     pub stdout: String,
@@ -772,13 +784,18 @@ pub struct BranchItem {
     pub elapsed_us: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<BranchTimings>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct BranchResponse {
     pub results: Vec<BranchItem>,
-    /// Time to write the fork snapshot (parent blocked for this long).
+    /// Time to capture the fork snapshot (parent blocked for this long).
     pub snapshot_us: u64,
+    /// Size of the captured linear memory, including allocator free space.
+    pub snapshot_bytes: usize,
+    pub snapshot_backend: &'static str,
     /// Total branch call time including all children.
     pub elapsed_us: u64,
 }

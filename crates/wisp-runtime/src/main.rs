@@ -24,6 +24,7 @@
 //! Python in a fresh WASM sandbox sub-millisecond."
 
 mod accel;
+mod branch_memory;
 mod capabilities;
 mod output;
 mod session;
@@ -271,6 +272,7 @@ impl Drop for CowMemory {
 pub(crate) struct Runtime {
     pub engine: Engine,
     pub module: Module,
+    pub branch_pre: Option<InstancePre<WasiP1Ctx>>,
     pub snapshot_len: usize,
     pub snapshot_pages: u64,
     pub snapshot_fd: RawFd,
@@ -412,9 +414,20 @@ fn build_runtime(
     let accel = accel::enabled_from_env();
     info!(accel, "wisp-accel (native BLAS offload)");
 
+    let branch_pre = if std::env::var("WISP_BRANCH_PRELINK").as_deref() == Ok("0") {
+        None
+    } else {
+        Some(session::prepare_branch(
+            &engine,
+            &module,
+            capabilities.clone(),
+            accel,
+        )?)
+    };
     Ok(Runtime {
         engine,
         module,
+        branch_pre,
         snapshot_len,
         snapshot_pages,
         snapshot_fd,
