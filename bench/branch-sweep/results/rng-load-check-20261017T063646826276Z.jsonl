@@ -1,0 +1,5 @@
+{"at": "2026-10-17T06:36:49.394550+00:00", "idle_pct": 74.58, "memory_pressure_level": 1, "swapins_per_s": 57.853320308813615, "swapouts_per_s": 0.0, "phase": "heartbeat-preflight", "quiet": false}
+{"at": "2026-10-17T06:36:54.911564+00:00", "idle_pct": 78.61, "memory_pressure_level": 1, "swapins_per_s": 1.6011862388357627, "swapouts_per_s": 0.0, "phase": "heartbeat-preflight", "quiet": false}
+{"at": "2026-10-17T06:37:00.425829+00:00", "idle_pct": 81.24, "memory_pressure_level": 1, "swapins_per_s": 1.6014491244080706, "swapouts_per_s": 0.0, "phase": "heartbeat-preflight", "quiet": true}
+{"at": "2026-10-17T06:37:05.932190+00:00", "idle_pct": 82.3, "memory_pressure_level": 1, "swapins_per_s": 0.0, "swapouts_per_s": 0.0, "phase": "heartbeat-preflight", "quiet": true}
+{"at": "2026-10-17T06:37:11.451530+00:00", "idle_pct": 83.7, "memory_pressure_level": 1, "swapins_per_s": 0.0, "swapouts_per_s": 0.0, "phase": "heartbeat-preflight", "quiet": true}

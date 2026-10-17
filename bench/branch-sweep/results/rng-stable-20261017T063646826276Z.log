@@ -1,0 +1,377 @@
+block 0: before
+load gate before-startup: idle=81.2% pressure=1 swap in/out=0/0 pages/s
+load gate before-warmup: idle=88.2% pressure=1 swap in/out=0/0 pages/s
+load gate round-1: idle=88.3% pressure=1 swap in/out=0/0 pages/s
+round 1: plain=276.3ms, seatbelt=321.9ms, wisp=437.0ms
+load gate round-2: idle=86.6% pressure=1 swap in/out=0/0 pages/s
+round 2: plain=277.2ms, seatbelt=311.3ms, wisp=391.6ms
+load gate round-3: idle=87.8% pressure=1 swap in/out=0/0 pages/s
+round 3: plain=271.5ms, seatbelt=316.2ms, wisp=358.0ms
+load gate round-4: idle=89.2% pressure=1 swap in/out=0/0 pages/s
+round 4: plain=272.4ms, seatbelt=356.8ms, wisp=401.5ms
+load gate round-5: idle=89.1% pressure=1 swap in/out=0/0 pages/s
+round 5: plain=275.8ms, seatbelt=329.1ms, wisp=411.9ms
+load gate round-6: idle=88.7% pressure=1 swap in/out=0/0 pages/s
+round 6: plain=284.2ms, seatbelt=324.4ms, wisp=395.2ms
+load gate round-7: idle=88.7% pressure=1 swap in/out=0/0 pages/s
+round 7: plain=274.2ms, seatbelt=335.6ms, wisp=406.0ms
+load gate round-8: idle=86.7% pressure=1 swap in/out=0/0 pages/s
+round 8: plain=278.8ms, seatbelt=317.5ms, wisp=360.0ms
+load gate round-9: idle=84.5% pressure=1 swap in/out=0/0 pages/s
+round 9: plain=297.1ms, seatbelt=323.5ms, wisp=386.5ms
+{
+  "plain": {
+    "setup_ms": {
+      "median": 30.990667000878602,
+      "q1": 30.748290999326855,
+      "q3": 31.084583984920755,
+      "min": 30.64774998347275,
+      "max": 31.337042019004002
+    },
+    "branch_ms": {
+      "median": 245.02579198451713,
+      "q1": 242.958249989897,
+      "q3": 247.0518330228515,
+      "min": 240.1197500003036,
+      "max": 266.07591699576005
+    },
+    "total_ms": {
+      "median": 276.3101249875035,
+      "q1": 274.1636249993462,
+      "q3": 278.75533400219865,
+      "min": 271.46895800251514,
+      "max": 297.0661250001285
+    }
+  },
+  "seatbelt": {
+    "setup_ms": {
+      "median": 30.641165998531505,
+      "q1": 30.52845800993964,
+      "q3": 31.24849998857826,
+      "min": 30.347124993568286,
+      "max": 32.65045801526867
+    },
+    "branch_ms": {
+      "median": 291.8805420049466,
+      "q1": 286.53170898905955,
+      "q3": 296.85070799314417,
+      "min": 280.3193330182694,
+      "max": 325.92870798544027
+    },
+    "total_ms": {
+      "median": 323.5424580052495,
+      "q1": 317.4893749819603,
+      "q3": 329.074541979935,
+      "min": 311.311041994486,
+      "max": 356.7556249909103
+    }
+  },
+  "wisp": {
+    "setup_ms": {
+      "median": 101.24104100395925,
+      "q1": 77.20770797459409,
+      "q3": 116.3223749899771,
+      "min": 75.76633300050162,
+      "max": 117.23462500958703
+    },
+    "branch_ms": {
+      "median": 285.2290839946363,
+      "q1": 284.2389169964008,
+      "q3": 290.53137500886805,
+      "min": 279.90391600178555,
+      "max": 360.61687499750406
+    },
+    "total_ms": {
+      "median": 395.1781240175478,
+      "q1": 386.47012499859557,
+      "q3": 406.029582984047,
+      "min": 358.0167909676675,
+      "max": 436.9645419938024
+    }
+  }
+}
+block 1: after
+load gate before-startup: idle=88.8% pressure=1 swap in/out=0/0 pages/s
+load gate before-warmup: idle=88.6% pressure=1 swap in/out=0/0 pages/s
+load gate round-1: idle=89.3% pressure=1 swap in/out=0/0 pages/s
+round 1: plain=280.5ms, seatbelt=321.3ms, wisp=360.8ms
+load gate round-2: idle=84.5% pressure=1 swap in/out=0/0 pages/s
+round 2: plain=269.4ms, seatbelt=319.5ms, wisp=432.0ms
+load gate round-3: idle=89.4% pressure=1 swap in/out=0/0 pages/s
+round 3: plain=275.4ms, seatbelt=338.3ms, wisp=359.6ms
+load gate round-4: idle=89.5% pressure=1 swap in/out=0/0 pages/s
+round 4: plain=286.7ms, seatbelt=333.7ms, wisp=399.1ms
+load gate round-5: idle=89.3% pressure=1 swap in/out=0/0 pages/s
+round 5: plain=299.3ms, seatbelt=316.5ms, wisp=386.9ms
+load gate round-6: idle=88.6% pressure=1 swap in/out=0/0 pages/s
+round 6: plain=276.2ms, seatbelt=333.6ms, wisp=399.4ms
+load gate round-7: idle=88.8% pressure=1 swap in/out=0/0 pages/s
+round 7: plain=300.8ms, seatbelt=328.8ms, wisp=395.3ms
+load gate round-8: idle=89.2% pressure=1 swap in/out=0/0 pages/s
+round 8: plain=270.8ms, seatbelt=331.7ms, wisp=412.0ms
+load gate round-9: idle=86.3% pressure=1 swap in/out=0/0 pages/s
+round 9: plain=266.4ms, seatbelt=323.7ms, wisp=406.4ms
+{
+  "plain": {
+    "setup_ms": {
+      "median": 30.904292012564838,
+      "q1": 30.661166994832456,
+      "q3": 30.99095801007934,
+      "min": 30.494375008856878,
+      "max": 31.231708999257535
+    },
+    "branch_ms": {
+      "median": 245.03291602013633,
+      "q1": 239.8506670142524,
+      "q3": 255.43800002196804,
+      "min": 235.4775419807993,
+      "max": 269.81162501033396
+    },
+    "total_ms": {
+      "median": 276.2410420109518,
+      "q1": 270.79095802037045,
+      "q3": 286.650499998359,
+      "min": 266.4302079938352,
+      "max": 300.758915982442
+    }
+  },
+  "seatbelt": {
+    "setup_ms": {
+      "median": 30.49537501647137,
+      "q1": 30.47412500018254,
+      "q3": 31.53150001890026,
+      "min": 30.403874989133328,
+      "max": 32.10887499153614
+    },
+    "branch_ms": {
+      "median": 298.0109580093995,
+      "q1": 288.8574159878772,
+      "q3": 301.7900830018334,
+      "min": 285.7435420155525,
+      "max": 306.10208300640807
+    },
+    "total_ms": {
+      "median": 328.8481670024339,
+      "q1": 321.2631250207778,
+      "q3": 333.6045000178274,
+      "min": 316.4994170074351,
+      "max": 338.33079200121574
+    }
+  },
+  "wisp": {
+    "setup_ms": {
+      "median": 103.08966602315195,
+      "q1": 69.3604999978561,
+      "q3": 105.0847909937147,
+      "min": 68.52066700230353,
+      "max": 105.7403750019148
+    },
+    "branch_ms": {
+      "median": 294.24041698803194,
+      "q1": 290.2746250038035,
+      "q3": 306.2873330200091,
+      "min": 282.2926670196466,
+      "max": 339.70000001136214
+    },
+    "total_ms": {
+      "median": 399.0515830228105,
+      "q1": 386.86433402472176,
+      "q3": 406.3878340239171,
+      "min": 359.6351250016596,
+      "max": 432.03154200455174
+    }
+  }
+}
+block 2: after
+load gate before-startup: idle=87.9% pressure=1 swap in/out=0/0 pages/s
+load gate before-warmup: idle=88.6% pressure=1 swap in/out=0/0 pages/s
+load gate round-1: idle=89.0% pressure=1 swap in/out=0/0 pages/s
+round 1: plain=278.3ms, seatbelt=312.0ms, wisp=372.0ms
+load gate round-2: idle=89.5% pressure=1 swap in/out=0/0 pages/s
+round 2: plain=269.2ms, seatbelt=324.2ms, wisp=397.2ms
+load gate round-3: idle=89.2% pressure=1 swap in/out=0/0 pages/s
+round 3: plain=290.1ms, seatbelt=318.7ms, wisp=395.8ms
+load gate round-4: idle=81.5% pressure=1 swap in/out=2/0 pages/s
+round 4: plain=282.7ms, seatbelt=346.0ms, wisp=382.8ms
+load gate round-5: idle=88.7% pressure=1 swap in/out=0/0 pages/s
+round 5: plain=288.7ms, seatbelt=464.2ms, wisp=439.5ms
+load gate round-6: idle=76.3% pressure=1 swap in/out=0/0 pages/s
+round 6: plain=276.1ms, seatbelt=400.8ms, wisp=414.8ms
+load gate round-7: idle=89.7% pressure=1 swap in/out=0/0 pages/s
+round 7: plain=297.6ms, seatbelt=350.5ms, wisp=446.5ms
+load gate round-8: idle=88.7% pressure=1 swap in/out=2/0 pages/s
+round 8: plain=276.2ms, seatbelt=324.8ms, wisp=409.2ms
+load gate round-9: idle=89.2% pressure=1 swap in/out=0/0 pages/s
+round 9: plain=308.2ms, seatbelt=369.4ms, wisp=549.7ms
+{
+  "plain": {
+    "setup_ms": {
+      "median": 31.01987499394454,
+      "q1": 30.62041601515375,
+      "q3": 32.11720800027251,
+      "min": 30.380790994968265,
+      "max": 32.54737501265481
+    },
+    "branch_ms": {
+      "median": 250.29433399322443,
+      "q1": 245.32216700026765,
+      "q3": 259.1107079933863,
+      "min": 238.15558399655856,
+      "max": 275.60437499778345
+    },
+    "total_ms": {
+      "median": 282.6847080141306,
+      "q1": 276.2293749838136,
+      "q3": 290.14770800131373,
+      "min": 269.1904160019476,
+      "max": 308.1933749781456
+    }
+  },
+  "seatbelt": {
+    "setup_ms": {
+      "median": 30.940041004214436,
+      "q1": 30.69320900249295,
+      "q3": 31.3728750043083,
+      "min": 30.52170798764564,
+      "max": 35.22270897519775
+    },
+    "branch_ms": {
+      "median": 315.04829198820516,
+      "q1": 293.2357499958016,
+      "q3": 333.6684170062654,
+      "min": 280.29645801871084,
+      "max": 430.5255000072066
+    },
+    "total_ms": {
+      "median": 345.96883298945613,
+      "q1": 324.2471670091618,
+      "q3": 369.4486249878537,
+      "min": 311.95591698633507,
+      "max": 464.1902089933865
+    }
+  },
+  "wisp": {
+    "setup_ms": {
+      "median": 99.27354101091623,
+      "q1": 82.3958330147434,
+      "q3": 106.08962501282804,
+      "min": 68.58595900121145,
+      "max": 110.62366599799134
+    },
+    "branch_ms": {
+      "median": 308.7210000085179,
+      "q1": 303.437666996615,
+      "q3": 333.28595900093205,
+      "min": 283.54900001431815,
+      "max": 477.6813750213478
+    },
+    "total_ms": {
+      "median": 409.2444179696031,
+      "q1": 395.82891602185555,
+      "q3": 439.5429590076674,
+      "min": 372.02362599782646,
+      "max": 549.6820420084987
+    }
+  }
+}
+block 3: before
+load gate before-startup: idle=67.4% pressure=1 swap in/out=0/0 pages/s
+load gate before-startup: idle=78.9% pressure=1 swap in/out=0/0 pages/s
+load gate before-startup: idle=76.9% pressure=1 swap in/out=3/0 pages/s
+load gate before-warmup: idle=83.0% pressure=1 swap in/out=0/0 pages/s
+load gate before-warmup: idle=82.8% pressure=1 swap in/out=2/0 pages/s
+load gate round-1: idle=88.5% pressure=1 swap in/out=0/0 pages/s
+round 1: plain=302.5ms, seatbelt=342.0ms, wisp=558.1ms
+load gate round-2: idle=88.5% pressure=1 swap in/out=0/0 pages/s
+round 2: plain=271.7ms, seatbelt=318.7ms, wisp=407.8ms
+load gate round-3: idle=88.7% pressure=1 swap in/out=0/0 pages/s
+round 3: plain=270.4ms, seatbelt=327.9ms, wisp=405.9ms
+load gate round-4: idle=88.7% pressure=1 swap in/out=0/0 pages/s
+round 4: plain=290.9ms, seatbelt=324.8ms, wisp=430.1ms
+load gate round-5: idle=88.6% pressure=1 swap in/out=5/0 pages/s
+round 5: plain=280.0ms, seatbelt=361.1ms, wisp=459.4ms
+load gate round-6: idle=88.2% pressure=1 swap in/out=0/0 pages/s
+round 6: plain=279.5ms, seatbelt=377.2ms, wisp=408.7ms
+load gate round-7: idle=88.8% pressure=1 swap in/out=0/0 pages/s
+round 7: plain=269.6ms, seatbelt=383.9ms, wisp=424.1ms
+load gate round-8: idle=89.9% pressure=1 swap in/out=0/0 pages/s
+round 8: plain=286.0ms, seatbelt=324.3ms, wisp=413.2ms
+load gate round-9: idle=88.8% pressure=1 swap in/out=0/0 pages/s
+round 9: plain=288.8ms, seatbelt=333.8ms, wisp=368.9ms
+{
+  "plain": {
+    "setup_ms": {
+      "median": 30.96329202526249,
+      "q1": 30.70274999481626,
+      "q3": 32.340999983716756,
+      "min": 30.493417027173564,
+      "max": 33.95754098892212
+    },
+    "branch_ms": {
+      "median": 247.41941600223072,
+      "q1": 240.50358298700303,
+      "q3": 257.8697910066694,
+      "min": 238.0468750197906,
+      "max": 267.72037500631995
+    },
+    "total_ms": {
+      "median": 280.04425001563504,
+      "q1": 271.663958003046,
+      "q3": 288.7672499928158,
+      "min": 269.61191699956544,
+      "max": 302.5254579843022
+    }
+  },
+  "seatbelt": {
+    "setup_ms": {
+      "median": 31.725041975732893,
+      "q1": 31.179499987047166,
+      "q3": 32.10499999113381,
+      "min": 30.56945899152197,
+      "max": 33.7934999843128
+    },
+    "branch_ms": {
+      "median": 302.1637909987476,
+      "q1": 292.3055829887744,
+      "q3": 330.21129202097654,
+      "min": 287.35245802090503,
+      "max": 351.2707079935353
+    },
+    "total_ms": {
+      "median": 333.803874993464,
+      "q1": 324.7566249920055,
+      "q3": 361.1347090045456,
+      "min": 318.7305410101544,
+      "max": 383.8602500036359
+    }
+  },
+  "wisp": {
+    "setup_ms": {
+      "median": 125.32129202736542,
+      "q1": 120.24354201275855,
+      "q3": 132.8855419997126,
+      "min": 74.2989580030553,
+      "max": 139.01879198965617
+    },
+    "branch_ms": {
+      "median": 294.61458401056007,
+      "q1": 285.68037500372157,
+      "q3": 322.4105419940315,
+      "min": 283.3895410003606,
+      "max": 425.21841698908247
+    },
+    "total_ms": {
+      "median": 413.1877500039991,
+      "q1": 407.82916598254815,
+      "q3": 430.05608397652395,
+      "min": 368.91354201361537,
+      "max": 558.1039589887951
+    }
+  }
+}
+{
+  "after_before_ratio_of_medians": 0.9810293162547745,
+  "total_time_reduction_pct": 1.897068374522548,
+  "saved_ms": 7.719728469965048,
+  "after_wisp_native_ratio_of_medians": 1.2087447798641462
+}
